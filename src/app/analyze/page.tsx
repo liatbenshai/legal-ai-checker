@@ -98,73 +98,73 @@ export default function AnalyzePage() {
       }
 
       const supabase = createClient();
+      const BUCKET = "audio";
 
-      // ── Diagnostic: verify bucket exists ──
-      console.log("Attempting upload to bucket: audio");
-      console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+      // ── Diagnostic: verify connection & bucket ──
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      console.log("[upload] Supabase URL:", supabaseUrl);
+      console.log("[upload] Target bucket:", BUCKET);
       try {
         const { data: buckets, error: bucketsErr } = await supabase.storage.listBuckets();
         if (bucketsErr) {
-          console.error("Failed to list buckets:", bucketsErr);
-        } else {
-          console.log("Available buckets:", buckets.map((b) => b.name));
-          if (!buckets.some((b) => b.name === "audio")) {
-            console.warn("⚠️ Bucket 'audio' NOT found! Available:", buckets.map((b) => b.name));
-          }
+          console.error("[upload] listBuckets error:", bucketsErr.message);
+          throw new Error(
+            "שגיאת הרשאות: האתר לא מצליח להתחבר לאחסון הקבצים. ודאו שמפתח ה-API תקין."
+          );
+        }
+        const bucketNames = buckets.map((b) => b.name);
+        console.log("[upload] Available buckets:", bucketNames);
+        if (bucketNames.length === 0) {
+          throw new Error(
+            "שגיאת הרשאות: האתר לא מצליח להתחבר לאחסון הקבצים. ודאו שמפתח ה-API תקין."
+          );
+        }
+        if (!bucketNames.includes(BUCKET)) {
+          throw new Error(
+            `דלי האחסון '${BUCKET}' לא נמצא. דליים זמינים: ${bucketNames.join(", ")}`
+          );
         }
       } catch (diagErr) {
-        console.warn("Bucket diagnostic failed:", diagErr);
+        if (diagErr instanceof Error && diagErr.message.startsWith("שגיאת")) {
+          throw diagErr; // re-throw our Hebrew errors
+        }
+        console.warn("[upload] Bucket check failed:", diagErr);
       }
 
       const timestamp = Date.now();
       const safeName = audioFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storagePath = `uploads/${timestamp}_${safeName}`;
 
-      // Upload with XHR for real-time progress tracking
-      const audioUrl = await new Promise<string>((resolve, reject) => {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const uploadEndpoint = `${supabaseUrl}/storage/v1/object/audio/${storagePath}`;
+      // ── Simulated progress during upload ──
+      const progressInterval = setInterval(() => {
+        setUploadPercent((prev) => Math.min(prev + 3, 90));
+      }, 500);
 
-        console.log("Upload endpoint:", uploadEndpoint);
+      // ── Upload via Supabase SDK (handles auth headers correctly) ──
+      console.log("[upload] Uploading to:", `${BUCKET}/${storagePath}`);
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET)
+        .upload(storagePath, audioFile, {
+          contentType: audioFile.type || "audio/mpeg",
+          upsert: false,
+        });
 
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", uploadEndpoint);
-        xhr.setRequestHeader("Authorization", `Bearer ${supabaseKey}`);
-        xhr.setRequestHeader("apikey", supabaseKey);
-        xhr.setRequestHeader("Content-Type", audioFile.type || "audio/mpeg");
-        xhr.setRequestHeader("x-upsert", "false");
+      clearInterval(progressInterval);
 
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
-            setUploadPercent(pct);
-          }
-        };
+      if (uploadError) {
+        console.error("[upload] Upload error:", uploadError);
+        throw new Error(
+          `שגיאה בהעלאת הקובץ: ${uploadError.message}`
+        );
+      }
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            const publicUrl = `${supabaseUrl}/storage/v1/object/public/audio/${storagePath}`;
-            console.log("Upload success, public URL:", publicUrl);
-            resolve(publicUrl);
-          } else {
-            let msg = "שגיאה בהעלאת קובץ האודיו";
-            try {
-              const body = JSON.parse(xhr.responseText);
-              console.error("Upload failed:", xhr.status, body);
-              if (body.message) msg = body.message;
-              if (body.error) msg = body.error;
-            } catch {
-              console.error("Upload failed:", xhr.status, xhr.responseText);
-            }
-            reject(new Error(msg));
-          }
-        };
+      // Build public URL
+      const { data: publicUrlData } = supabase.storage
+        .from(BUCKET)
+        .getPublicUrl(storagePath);
+      const audioUrl = publicUrlData.publicUrl;
 
-        xhr.onerror = () => reject(new Error("שגיאת רשת בהעלאת האודיו"));
-        xhr.send(audioFile);
-      });
-
+      console.log("[upload] Success! Public URL:", audioUrl);
       setUploadPercent(100);
       updateStep("upload", "completed");
 
