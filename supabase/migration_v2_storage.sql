@@ -3,9 +3,9 @@
 -- Run this in the Supabase SQL Editor if audio uploads fail
 -- ============================================================
 
--- Ensure AUDIO-FILES bucket exists
+-- Ensure audio bucket exists
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('AUDIO-FILES', 'AUDIO-FILES', false)
+VALUES ('audio', 'audio', false)
 ON CONFLICT (id) DO NOTHING;
 
 -- Drop old restrictive policies (they required auth.uid)
@@ -15,12 +15,12 @@ DROP POLICY IF EXISTS "Users can read own audio files" ON storage.objects;
 -- Allow uploads from anon key (the app uses signed URLs for access)
 CREATE POLICY "Allow audio uploads"
   ON storage.objects FOR INSERT
-  WITH CHECK (bucket_id = 'AUDIO-FILES');
+  WITH CHECK (bucket_id = 'audio');
 
 -- Allow reads for signed URL generation
 CREATE POLICY "Allow audio reads"
   ON storage.objects FOR SELECT
-  USING (bucket_id = 'AUDIO-FILES');
+  USING (bucket_id = 'audio');
 
 -- Also relax the transcripts table RLS for anon usage
 -- (remove if you add proper auth later)

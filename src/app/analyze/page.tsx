@@ -98,18 +98,38 @@ export default function AnalyzePage() {
       }
 
       const supabase = createClient();
+
+      // ── Diagnostic: verify bucket exists ──
+      console.log("Attempting upload to bucket: audio");
+      console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+      try {
+        const { data: buckets, error: bucketsErr } = await supabase.storage.listBuckets();
+        if (bucketsErr) {
+          console.error("Failed to list buckets:", bucketsErr);
+        } else {
+          console.log("Available buckets:", buckets.map((b) => b.name));
+          if (!buckets.some((b) => b.name === "audio")) {
+            console.warn("⚠️ Bucket 'audio' NOT found! Available:", buckets.map((b) => b.name));
+          }
+        }
+      } catch (diagErr) {
+        console.warn("Bucket diagnostic failed:", diagErr);
+      }
+
       const timestamp = Date.now();
       const safeName = audioFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storagePath = `uploads/${timestamp}_${safeName}`;
 
-      // Upload with XHR for progress tracking
+      // Upload with XHR for real-time progress tracking
       const audioUrl = await new Promise<string>((resolve, reject) => {
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
         const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const uploadUrl = `${supabaseUrl}/storage/v1/object/AUDIO-FILES/${storagePath}`;
+        const uploadEndpoint = `${supabaseUrl}/storage/v1/object/audio/${storagePath}`;
+
+        console.log("Upload endpoint:", uploadEndpoint);
 
         const xhr = new XMLHttpRequest();
-        xhr.open("POST", uploadUrl);
+        xhr.open("POST", uploadEndpoint);
         xhr.setRequestHeader("Authorization", `Bearer ${supabaseKey}`);
         xhr.setRequestHeader("apikey", supabaseKey);
         xhr.setRequestHeader("Content-Type", audioFile.type || "audio/mpeg");
@@ -124,17 +144,18 @@ export default function AnalyzePage() {
 
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
-            // Build the public URL for the uploaded file
-            const publicUrl = `${supabaseUrl}/storage/v1/object/public/AUDIO-FILES/${storagePath}`;
+            const publicUrl = `${supabaseUrl}/storage/v1/object/public/audio/${storagePath}`;
+            console.log("Upload success, public URL:", publicUrl);
             resolve(publicUrl);
           } else {
             let msg = "שגיאה בהעלאת קובץ האודיו";
             try {
               const body = JSON.parse(xhr.responseText);
+              console.error("Upload failed:", xhr.status, body);
               if (body.message) msg = body.message;
               if (body.error) msg = body.error;
             } catch {
-              // keep default msg
+              console.error("Upload failed:", xhr.status, xhr.responseText);
             }
             reject(new Error(msg));
           }
