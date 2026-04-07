@@ -3,103 +3,98 @@ import OpenAI from "openai";
 import type { Discrepancy } from "@/lib/types";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
-// ── Suspicion Engine prompt — scan PDF for anomalies ────────────────
-const SYSTEM_PROMPT = `אתה מבקר תמלילים משפטיים בכיר עם 30 שנות ניסיון.
+// ── Deep Legal Anomaly Auditor ──────────────────────────────────────
+const SYSTEM_PROMPT = `אתה מבקר תמלילים משפטיים בכיר עם 30 שנות ניסיון בפרוטוקולים של בתי משפט בישראל.
 
-## תפקידך: סורק חשדות (Suspicion Engine)
-אתה לא מתקן את הפרוטוקול. אתה סורק אותו ומסמן "אזורי חשד" שדורשים בדיקה אנושית.
-ה-PDF הוא הבסיס. תמליל ה-Whisper (אם סופק) הוא כלי עזר שגיא בלבד.
+## תפקידך
+סרוק את טקסט הפרוטוקול (PDF) ואתר "אזורי חשד" המבוססים על דפוסי כשל ידועים של מערכות תמלול אוטומטיות בעברית.
+אתה לא מתקן. אתה מסמן. האדם יבדוק ויתקן.
+ה-Whisper (אם סופק) הוא כלי עזר שגיא בלבד — רמז, לא אמת.
 
-## מה לסמן כחשוד:
+## דפוסי כשל עמוקים בעברית (Deep Hebrew Failure Patterns)
 
-### 🔴 חשד גבוה (high) — דורש בדיקה מיידית:
+### 🔴 חשד גבוה (high) — CRITICAL:
 
-**ג'יבריש / מילים לא קיימות (gibberish):**
-- מילים שאינן קיימות בעברית ואינן שם פרטי/מקצועי מוכר
-- רצפי אותיות חסרי משמעות שנראים כמו הזיית מכונה
-- מילים שנשמעות כמו עברית אבל אינן מילים אמיתיות
-- דוגמאות: "דה משלמי", "מלולציה", "קסטרפי"
-- riskReason: "gibberish"
+**1. אי-התאמה מורפולוגית (morphologicalMismatch):**
+- סיומות מבולבלות: ת/תי/ה שלא מתאימות להקשר (גוף, מגדר, זמן)
+- "אמרת" במקום "אמרתי", "עשתה" במקום "עשה"
+- שינוי גוף שמשנה את זהות הדובר/מושא
 
-**קריסת תחביר (Syntax Collapse):**
-- משפטים שבורים דקדוקית — חסר נושא, חסר פועל, או מבנה לא הגיוני
-- משפט שמתחיל באמצע רעיון (סימן להשמטת תוכן)
-- שני משפטים שמתמזגים ללא הגיון
-- riskReason: "syntaxCollapse"
+**2. הזיות משפטיות (legalHallucination):**
+- מילים עבריות תקינות שלא שייכות להקשר משפטי
+- "סיבוב" במקום "שיבוב", "הרגשה" במקום "הרשעה"
+- מונח שנשמע דומה למונח משפטי אבל הוא מילה יומיומית
 
-**עייפות דובר — פסקה מעל 400 תווים ללא החלפת דובר (Speaker Fatigue):**
-- כל בלוק טקסט ארוך מ-400 תווים ללא שינוי דובר
-- חשוד מאוד להחלפת דובר שלא תועדה
-- בפרוטוקול משפטי, דובר אחד לעתים רחוקות מדבר ברצף כזה
-- riskReason: "speakerFatigue"
+**3. היפוך שלילה/אישור — חובת סימון מוחלטת (negationFlag):**
+- סמן כל משפט המכיל: לא, אין, מעולם, חלילה, אף פעם, שום
+- סמן כל משפט המכיל: כן, נכון, אמת, בהחלט, אכן
+- אלו הם האזורים הקריטיים ביותר — שגיאה כאן הופכת עדות
 
-**חשודים פונטיים (Phonetic Suspects):**
-- החלפת "לא" ו"לו" (משנה משמעות לחלוטין)
-- מספרים שנראים לא הגיוניים בהקשר (1000 במקום 100, 15 במקום 50)
-- שמות שנראים מעוותים או שונים מהופעות קודמות באותו מסמך
-- riskReason: "phoneticSuspect"
+**4. חפיפת דוברים / קיפול הפסקה (speakerOverlap):**
+- אזור שבו נראה שדוברים מדברים בו-זמנית
+- קטע PDF שקיפל הפרעה/קריאת ביניים לתוך דברי דובר אחד
+- שינוי פתאומי בסגנון באמצע פסקת דובר
 
-**שיוך דובר חשוד:**
-- משפט שלא הגיוני שהשופט/העד/עורך הדין אמר אותו
-- מעבר פתאומי בסגנון הדיבור באמצע קטע של אותו דובר
-- riskReason: "speakerMismatch"
+**5. עייפות דובר — בלוק מעל 400 תווים (speakerFatigue):**
+- כל בלוק טקסט מעל 400 תווים ללא החלפת דובר
+- חשוד מאוד — בפרוטוקול משפטי יש תמיד דו-שיח
 
-**היפוכי שלילה:**
-- "הוא כן הגיע" לעומת "הוא לא הגיע" — בדוק אם ה"לא" נבלע
-- תשובות קצרות ("כן", "לא") שאולי הופכו
-- riskReason: "negationFlip"
+**6. שמירת שמות ומספרים — סימון חובה (properNameWatch):**
+- סמן כל שם פרטי/משפחה שמופיע בטקסט
+- סמן כל מספר: תאריכים, סכומים, כתובות, מספרי תיק
+- שמות ומספרים הם נקודות הכשל השכיחות ביותר
+
+**7. ג'יבריש וקריסת תחביר (gibberish / syntaxCollapse):**
+- מילים לא קיימות בעברית
+- משפטים שבורים: חסר נושא, חסר פועל
+- שני משפטים ממוזגים ללא הגיון
 
 ### 🟡 חשד בינוני (medium):
 
-**"החלקת" עדות (Smoothing):**
-- משפט שוטף ומנוסח היטב שנראה "טוב מדי" לעדות חיה
-- חשד שהיסוסים, גמגומים, או חזרות הוסרו
-- riskReason: "smoothing"
+**8. מלכודת ההחלקה (smoothing):**
+- משפט שוטף "מדי" לעדות חיה
+- חשד שהיסוסים הוסרו (אבל לא ניתן לוודא ללא אודיו)
+- תשובה שניתנה "מיד" ללא היסוס
 
-**פערים סמנטיים:**
-- משפטים שלא עוקבים הגיונית אחד אחרי השני
-- שאלה שהתשובה עליה לא מתאימה
-- קטע שנראה כאילו חסר בו משהו
-- riskReason: "semanticGap"
+**9. פערים סמנטיים (semanticGap):**
+- שאלה ותשובה שלא מתחברות
+- קטע שנראה כאילו חסרות בו מילים/משפטים
+- מעבר לא הגיוני בין נושאים
 
 ### 🟢 חשד נמוך (low):
-- ניסוח לא טבעי שעשוי להיות סגנון הדובר
-- מונח מקצועי נדיר שכדאי לוודא
-- riskReason: "stylistic"
+- ניסוח לא טבעי
+- מונח מקצועי נדיר (stylistic)
 
 ## מה לא לסמן:
-- ❌ הבדלי פיסוק ורווחים
-- ❌ עיצוב וכותרות
-- ❌ הבדלים שנובעים רק מטעות Whisper
+- ❌ רווחים, פיסוק, עיצוב
+- ❌ שגיאות שנובעות רק מ-Whisper
 
-## מילון מוגן — אל תסמן כחשודים:
+## מילון מוגן:
 זמישלני, פרופסיה, סומטית, לונגיטודינליות, אנמנזה, פתולוגיה,
 אטיולוגיה, קוגניטיבי, רטרואקטיבי, אמבולטורי, דיפרנציאלית,
-אפידמיולוגי, פרוגנוזה
+אפידמיולוגי, פרוגנוזה, שיבוב, הרשעה, זיכוי, ערבות, משכנתא
 
 ## פורמט
-החזר JSON בלבד:
 {"discrepancies": [{
   "timestamp": "MM:SS",
   "originalText": "הטקסט החשוד מה-PDF",
   "correctedText": "",
   "significance": "קריטי/בינוני/נמוך",
-  "explanation": "למה זה חשוד ומה לבדוק",
+  "explanation": "למה חשוד + מה לבדוק",
   "riskScore": "high/medium/low",
-  "riskReason": "סוג החשד"
+  "riskReason": "morphologicalMismatch/legalHallucination/negationFlag/speakerOverlap/speakerFatigue/properNameWatch/gibberish/syntaxCollapse/smoothing/semanticGap/stylistic",
+  "pageRef": "עמוד/שורה אם ניתן לזהות"
 }]}
 
-שדה correctedText נשאר ריק — המתמלל האנושי ימלא אותו.
-אם לא נמצאו אזורים חשודים: {"discrepancies": []}`;
+correctedText נשאר ריק — האדם ימלא.
+אם אין חשדות: {"discrepancies": []}`;
 
-// ── Chunking ───────────────────────────────────────────────────────
 const MAX_CHUNK_CHARS = 2000;
 
 function chunkText(text: string, maxChars: number): string[] {
   const chunks: string[] = [];
   const lines = text.split(/\n/);
   let current = "";
-
   for (const line of lines) {
     if (current.length + line.length + 1 > maxChars && current.length > 0) {
       chunks.push(current.trim());
@@ -107,11 +102,7 @@ function chunkText(text: string, maxChars: number): string[] {
     }
     current += line + "\n";
   }
-
-  if (current.trim()) {
-    chunks.push(current.trim());
-  }
-
+  if (current.trim()) chunks.push(current.trim());
   return chunks.length > 0 ? chunks : [text];
 }
 
@@ -122,15 +113,11 @@ async function scanChunk(
   chunkIndex: number,
   totalChunks: number
 ): Promise<Discrepancy[]> {
-  const userParts = [`## קטע ${chunkIndex + 1} מתוך ${totalChunks}\n\n### טקסט הפרוטוקול (PDF):\n${pdfChunk}`];
-
+  const parts = [`## קטע ${chunkIndex + 1} מתוך ${totalChunks}\n\n### פרוטוקול (PDF):\n${pdfChunk}`];
   if (whisperChunk) {
-    userParts.push(`\n\n### תמליל Whisper (כלי עזר בלבד — שגיא):\n${whisperChunk}`);
+    parts.push(`\n\n### רמז Whisper (שגיא — כלי עזר בלבד):\n${whisperChunk}`);
   }
-
-  userParts.push("\n\nסרוק את טקסט ה-PDF. סמן אזורים חשודים שדורשים בדיקה אנושית.");
-
-  const userMessage = userParts.join("");
+  parts.push("\n\nסרוק לפי דפוסי הכשל. סמן כל אזור חשוד.");
 
   console.log(`[analyze] Scanning chunk ${chunkIndex + 1}/${totalChunks} (${pdfChunk.length} chars)`);
 
@@ -138,7 +125,7 @@ async function scanChunk(
     model: "gpt-4o",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userMessage },
+      { role: "user", content: parts.join("") },
     ],
     temperature: 0.05,
     response_format: { type: "json_object" },
@@ -150,13 +137,9 @@ async function scanChunk(
 
   try {
     const parsed = JSON.parse(content);
-    const items = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray(parsed.discrepancies)
-        ? parsed.discrepancies
-        : [];
+    const items = Array.isArray(parsed) ? parsed : parsed.discrepancies || [];
 
-    const results = items.map(
+    return items.map(
       (item: Record<string, string>): Discrepancy => ({
         timestamp: item.timestamp || "00:00",
         originalText: item.originalText || "",
@@ -167,18 +150,16 @@ async function scanChunk(
         riskReason: item.riskReason || "",
         humanVerified: false,
         auditorNotes: "",
+        whisperHint: whisperChunk ? "" : undefined,
+        pageRef: item.pageRef || "",
       })
     );
-
-    console.log(`[analyze] Chunk ${chunkIndex + 1}: ${results.length} suspicious zones found`);
-    return results;
-  } catch (parseError) {
-    console.error("[analyze] Parse error:", parseError);
+  } catch {
+    console.error("[analyze] Parse error for chunk", chunkIndex + 1);
     return [];
   }
 }
 
-// ── Main handler ───────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
     const envError = validateEnvVars("OPENAI_API_KEY");
@@ -188,50 +169,30 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { pdfText, whisperText } = body;
 
-    if (!pdfText) {
-      return jsonResponse({ error: "חסר טקסט PDF" }, 400);
-    }
+    if (!pdfText) return jsonResponse({ error: "חסר טקסט PDF" }, 400);
 
-    console.log(`[analyze] === SUSPICION SCAN ===`);
-    console.log(`[analyze] PDF: ${pdfText.length} chars`);
-    if (whisperText) console.log(`[analyze] Whisper: ${whisperText.length} chars (advisory only)`);
+    console.log(`[analyze] === DEEP ANOMALY SCAN === PDF: ${pdfText.length} chars`);
 
     const pdfChunks = chunkText(pdfText, MAX_CHUNK_CHARS);
     const whisperChunks = whisperText ? chunkText(whisperText, MAX_CHUNK_CHARS) : null;
 
-    console.log(`[analyze] ${pdfChunks.length} PDF chunks`);
-
     const allFlags: Discrepancy[] = [];
-
     for (let i = 0; i < pdfChunks.length; i++) {
-      const whisperChunk = whisperChunks
-        ? whisperChunks[Math.min(i, whisperChunks.length - 1)]
-        : null;
-
-      const flags = await scanChunk(openai, pdfChunks[i], whisperChunk, i, pdfChunks.length);
+      const wc = whisperChunks ? whisperChunks[Math.min(i, whisperChunks.length - 1)] : null;
+      const flags = await scanChunk(openai, pdfChunks[i], wc, i, pdfChunks.length);
       allFlags.push(...flags);
     }
 
-    // Sort by timestamp
     allFlags.sort((a, b) => {
-      const toSec = (t: string) => {
-        const p = t.split(":").map(Number);
-        return (p[0] || 0) * 60 + (p[1] || 0);
-      };
-      return toSec(a.timestamp) - toSec(b.timestamp);
+      const s = (t: string) => { const p = t.split(":").map(Number); return (p[0]||0)*60+(p[1]||0); };
+      return s(a.timestamp) - s(b.timestamp);
     });
 
     const high = allFlags.filter((d) => d.riskScore === "high").length;
-    const medium = allFlags.filter((d) => d.riskScore === "medium").length;
+    const med = allFlags.filter((d) => d.riskScore === "medium").length;
+    console.log(`[analyze] === DONE: ${allFlags.length} zones (${high} high, ${med} medium) ===`);
 
-    console.log(`[analyze] === SCAN COMPLETE: ${allFlags.length} zones (${high} high, ${medium} medium) ===`);
-
-    return jsonResponse({
-      discrepancies: allFlags,
-      totalFound: allFlags.length,
-      chunksAnalyzed: pdfChunks.length,
-      summary: { high, medium, low: allFlags.length - high - medium },
-    });
+    return jsonResponse({ discrepancies: allFlags, totalFound: allFlags.length, chunksAnalyzed: pdfChunks.length });
   } catch (error) {
     return errorResponse("analyze", error, "שגיאה בסריקת הפרוטוקול");
   }

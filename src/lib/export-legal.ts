@@ -58,46 +58,34 @@ function emptyLine() {
 }
 
 function createDiscrepancyTable(discrepancies: Discrepancy[]) {
+  // 4-column court-ready table: Ref | Original | Correction | Significance
   const headerRow = new TableRow({
     tableHeader: true,
     children: [
       new TableCell({
-        width: { size: 3000, type: WidthType.DXA },
+        width: { size: 1200, type: WidthType.DXA },
         shading: { type: ShadingType.SOLID, color: "E8E8E8" },
-        children: [
-          new Paragraph({
-            bidirectional: true,
-            alignment: AlignmentType.CENTER,
-            children: [rtlRun("טקסט המקור (פרוטוקול)", { bold: true, size: 22 })],
-          }),
-        ],
+        children: [new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, children: [rtlRun("מיקום", { bold: true, size: 20 })] })],
       }),
       new TableCell({
-        width: { size: 3500, type: WidthType.DXA },
+        width: { size: 3200, type: WidthType.DXA },
         shading: { type: ShadingType.SOLID, color: "E8E8E8" },
-        children: [
-          new Paragraph({
-            bidirectional: true,
-            alignment: AlignmentType.CENTER,
-            children: [rtlRun("תיקון אנושי וזמן", { bold: true, size: 22 })],
-          }),
-        ],
+        children: [new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, children: [rtlRun("טקסט מקורי (פרוטוקול)", { bold: true, size: 20 })] })],
       }),
       new TableCell({
-        width: { size: 3000, type: WidthType.DXA },
+        width: { size: 3200, type: WidthType.DXA },
         shading: { type: ShadingType.SOLID, color: "E8E8E8" },
-        children: [
-          new Paragraph({
-            bidirectional: true,
-            alignment: AlignmentType.CENTER,
-            children: [rtlRun("משמעות הטעות", { bold: true, size: 22 })],
-          }),
-        ],
+        children: [new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, children: [rtlRun("תיקון ידני", { bold: true, size: 20 })] })],
+      }),
+      new TableCell({
+        width: { size: 2400, type: WidthType.DXA },
+        shading: { type: ShadingType.SOLID, color: "E8E8E8" },
+        children: [new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, children: [rtlRun("משמעות השגיאה", { bold: true, size: 20 })] })],
       }),
     ],
   });
 
-  // Only include rows that have been human-verified or manually corrected
+  // Only export rows that were human-verified or manually corrected
   const exportRows = discrepancies.filter(
     (d) => d.humanVerified || d.correctedText.trim().length > 0
   );
@@ -106,59 +94,48 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
     (d) =>
       new TableRow({
         children: [
-          // Col 1: מקור (PDF)
+          // Col 1: Ref (Page/Line + Timestamp)
           new TableCell({
-            width: { size: 3000, type: WidthType.DXA },
+            width: { size: 1200, type: WidthType.DXA },
             children: [
               new Paragraph({
                 bidirectional: true,
-                children: [rtlRun(d.originalText, { size: 22 })],
+                children: [rtlRun(d.pageRef || d.timestamp, { bold: true, size: 20 })],
+              }),
+              ...(d.pageRef ? [new Paragraph({ bidirectional: true, children: [rtlRun(`[${d.timestamp}]`, { size: 18 })] })] : []),
+            ],
+          }),
+          // Col 2: Original (PDF)
+          new TableCell({
+            width: { size: 3200, type: WidthType.DXA },
+            children: [
+              new Paragraph({ bidirectional: true, children: [rtlRun(d.originalText, { size: 20 })] }),
+            ],
+          }),
+          // Col 3: Correction (Manual) + verified marker
+          new TableCell({
+            width: { size: 3200, type: WidthType.DXA },
+            children: [
+              new Paragraph({
+                bidirectional: true,
+                children: [rtlRun(d.correctedText || "(לא תוקן)", { size: 20 })],
+              }),
+              ...(d.auditorNotes ? [new Paragraph({ bidirectional: true, children: [rtlRun(`הערה: ${d.auditorNotes}`, { size: 16 })] })] : []),
+              new Paragraph({
+                bidirectional: true,
+                children: [rtlRun(d.humanVerified ? "✓ אומת ידנית" : "⚠ טרם אומת", { bold: true, size: 16 })],
               }),
             ],
           }),
-          // Col 2: תיקון ידני + timestamp + verified marker
+          // Col 4: Significance
           new TableCell({
-            width: { size: 3500, type: WidthType.DXA },
+            width: { size: 2400, type: WidthType.DXA },
             children: [
               new Paragraph({
                 bidirectional: true,
                 children: [
-                  rtlRun(`[${d.timestamp}] `, { bold: true, size: 22 }),
-                  rtlRun(d.correctedText || "(לא תוקן)", { size: 22 }),
-                ],
-              }),
-              ...(d.auditorNotes
-                ? [
-                    new Paragraph({
-                      bidirectional: true,
-                      children: [
-                        rtlRun(`הערת מבקר: ${d.auditorNotes}`, { size: 18 }),
-                      ],
-                    }),
-                  ]
-                : []),
-              new Paragraph({
-                bidirectional: true,
-                children: [
-                  rtlRun(
-                    d.humanVerified
-                      ? "✓ נבדק ואומת ידנית על ידי מומחה משפטי"
-                      : "⚠ טרם אומת ידנית",
-                    { bold: true, size: 18 }
-                  ),
-                ],
-              }),
-            ],
-          }),
-          // Col 3: משמעות + סיווג
-          new TableCell({
-            width: { size: 3000, type: WidthType.DXA },
-            children: [
-              new Paragraph({
-                bidirectional: true,
-                children: [
-                  rtlRun(`[${d.significance}] `, { bold: true, size: 22 }),
-                  rtlRun(d.explanation, { size: 22 }),
+                  rtlRun(`[${d.significance}] `, { bold: true, size: 20 }),
+                  rtlRun(d.explanation, { size: 20 }),
                 ],
               }),
             ],

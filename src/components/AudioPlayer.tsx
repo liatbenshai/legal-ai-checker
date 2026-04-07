@@ -35,7 +35,7 @@ interface AudioPlayerProps {
 }
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
-const PRE_ROLL_SECONDS = 20;
+const PRE_ROLL_SECONDS = 1.5; // short pre-context for precision seek
 const BACKSTEP_SECONDS = 2;
 
 // ── WebHID types (subset) ──────────────────────────────────────────

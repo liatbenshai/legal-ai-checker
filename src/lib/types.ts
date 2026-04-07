@@ -16,6 +16,10 @@ export interface Discrepancy {
   humanVerified?: boolean;
   /** Free-form auditor notes */
   auditorNotes?: string;
+  /** Whisper hint text (shown as advisory, never overwrites) */
+  whisperHint?: string;
+  /** Page/line reference in the PDF */
+  pageRef?: string;
 }
 
 export interface WhisperSegment {
