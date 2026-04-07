@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   Scale,
@@ -16,6 +16,7 @@ import {
   Loader2,
   BarChart3,
   FolderOpen,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,7 +41,7 @@ interface TranscriptSummary {
 
 const statusConfig: Record<
   string,
-  { label: string; color: string; icon: typeof CheckCircle2 }
+  { label: string; color: string; icon: typeof CheckCircle2; animate?: boolean }
 > = {
   done: {
     label: "הושלם",
@@ -48,13 +49,14 @@ const statusConfig: Record<
     icon: CheckCircle2,
   },
   processing: {
-    label: "בעיבוד",
-    color: "bg-amber/10 text-amber border-amber/20",
-    icon: Clock,
+    label: "בניתוח...",
+    color: "bg-indigo/10 text-indigo border-indigo/20",
+    icon: Loader2,
+    animate: true,
   },
   pending: {
     label: "ממתין",
-    color: "bg-muted text-muted-foreground border-border",
+    color: "bg-amber/10 text-amber border-amber/20",
     icon: Clock,
   },
   error: {
@@ -67,21 +69,39 @@ const statusConfig: Record<
 export default function DashboardPage() {
   const [transcripts, setTranscripts] = useState<TranscriptSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch("/api/transcripts");
-        const data = await res.json();
-        if (res.ok) setTranscripts(data.transcripts || []);
-      } catch {
-        // silently fail — dashboard still usable
-      } finally {
-        setLoading(false);
+  const fetchTranscripts = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const res = await fetch("/api/transcripts", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) {
+        setTranscripts(data.transcripts || []);
+        setLastRefresh(new Date());
       }
+    } catch {
+      // silently fail — dashboard still usable
+    } finally {
+      setLoading(false);
     }
-    load();
   }, []);
+
+  // Initial load
+  useEffect(() => {
+    fetchTranscripts(true);
+  }, [fetchTranscripts]);
+
+  // Auto-refresh every 15 seconds if any transcript is processing
+  useEffect(() => {
+    const hasProcessing = transcripts.some(
+      (t) => t.status === "processing" || t.status === "pending"
+    );
+    if (!hasProcessing) return;
+
+    const interval = setInterval(() => fetchTranscripts(false), 15000);
+    return () => clearInterval(interval);
+  }, [transcripts, fetchTranscripts]);
 
   const completedCount = transcripts.filter((t) => t.status === "done").length;
   const openCount = transcripts.filter((t) => t.status !== "done").length;
@@ -228,11 +248,28 @@ export default function DashboardPage() {
 
         {/* History Table */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-indigo" />
               היסטוריית ניתוחים
             </CardTitle>
+            <div className="flex items-center gap-3">
+              {lastRefresh && (
+                <span className="text-xs text-muted-foreground">
+                  עודכן {lastRefresh.toLocaleTimeString("he-IL")}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchTranscripts(true)}
+                disabled={loading}
+                className="gap-1.5"
+              >
+                <RotateCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                רענן
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {loading ? (
@@ -318,7 +355,9 @@ export default function DashboardPage() {
                             variant="outline"
                             className={`gap-1 ${sc.color}`}
                           >
-                            <StatusIcon className="h-3 w-3" />
+                            <StatusIcon
+                              className={`h-3 w-3 ${sc.animate ? "animate-spin" : ""}`}
+                            />
                             {sc.label}
                           </Badge>
                         </TableCell>

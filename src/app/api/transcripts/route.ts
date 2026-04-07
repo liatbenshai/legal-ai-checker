@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
+// Never cache — always fetch fresh data from Supabase
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const envError = validateEnvVars(
