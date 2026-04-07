@@ -43,6 +43,7 @@ export default function AnalyzePage() {
   const [error, setError] = useState<string | null>(null);
   const [currentAudioTime, setCurrentAudioTime] = useState(0);
   const [transcriptId, setTranscriptId] = useState<string | null>(null);
+  const [uploadPercent, setUploadPercent] = useState(0);
 
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
   const canAnalyze = audioFile && pdfFile && !isAnalyzing;
@@ -86,8 +87,9 @@ export default function AnalyzePage() {
       updateStep("pdf", "completed");
 
       // ── Step 2: Upload audio directly to Supabase Storage ─────
-      //    (browser → Supabase, bypasses Vercel 4.5MB limit)
+      //    Browser → Supabase CDN (bypasses Vercel entirely)
       updateStep("upload", "in_progress");
+      setUploadPercent(0);
 
       if (audioFile.size > MAX_AUDIO_SIZE) {
         throw new Error(
@@ -100,27 +102,49 @@ export default function AnalyzePage() {
       const safeName = audioFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const storagePath = `uploads/${timestamp}_${safeName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("audio-files")
-        .upload(storagePath, audioFile, {
-          contentType: audioFile.type || "audio/mpeg",
-          upsert: false,
-        });
+      // Upload with XHR for progress tracking
+      const audioUrl = await new Promise<string>((resolve, reject) => {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+        const uploadUrl = `${supabaseUrl}/storage/v1/object/AUDIO-FILES/${storagePath}`;
 
-      if (uploadError) {
-        console.error("Supabase upload error:", uploadError);
-        throw new Error("שגיאה בהעלאת קובץ האודיו לשרת. בדקו הרשאות אחסון ב-Supabase.");
-      }
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", uploadUrl);
+        xhr.setRequestHeader("Authorization", `Bearer ${supabaseKey}`);
+        xhr.setRequestHeader("apikey", supabaseKey);
+        xhr.setRequestHeader("Content-Type", audioFile.type || "audio/mpeg");
+        xhr.setRequestHeader("x-upsert", "false");
 
-      // Get a signed URL valid for 1 hour
-      const { data: urlData, error: urlError } = await supabase.storage
-        .from("audio-files")
-        .createSignedUrl(storagePath, 3600);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            setUploadPercent(pct);
+          }
+        };
 
-      if (urlError || !urlData?.signedUrl) {
-        throw new Error("שגיאה ביצירת קישור לקובץ האודיו");
-      }
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            // Build the public URL for the uploaded file
+            const publicUrl = `${supabaseUrl}/storage/v1/object/public/AUDIO-FILES/${storagePath}`;
+            resolve(publicUrl);
+          } else {
+            let msg = "שגיאה בהעלאת קובץ האודיו";
+            try {
+              const body = JSON.parse(xhr.responseText);
+              if (body.message) msg = body.message;
+              if (body.error) msg = body.error;
+            } catch {
+              // keep default msg
+            }
+            reject(new Error(msg));
+          }
+        };
 
+        xhr.onerror = () => reject(new Error("שגיאת רשת בהעלאת האודיו"));
+        xhr.send(audioFile);
+      });
+
+      setUploadPercent(100);
       updateStep("upload", "completed");
 
       // ── Step 3: Transcribe via URL (tiny JSON, no body limit) ─
@@ -129,7 +153,7 @@ export default function AnalyzePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          audioUrl: urlData.signedUrl,
+          audioUrl,
           fileName: audioFile.name,
         }),
       });
@@ -338,6 +362,17 @@ export default function AnalyzePage() {
                           {step.label}
                         </p>
                         {step.errorMessage && <p className="mt-0.5 text-xs text-rose">{step.errorMessage}</p>}
+                        {step.id === "upload" && step.status === "in_progress" && uploadPercent > 0 && (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <div className="h-1.5 flex-1 rounded-full bg-indigo/10">
+                              <div
+                                className="h-1.5 rounded-full bg-indigo transition-all duration-300"
+                                style={{ width: `${uploadPercent}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-mono text-indigo">{uploadPercent}%</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
