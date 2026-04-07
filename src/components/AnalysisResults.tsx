@@ -44,15 +44,19 @@ const riskConfig = {
 } as const;
 
 const RISK_REASON_LABELS: Record<string, string> = {
+  gibberish: "ג'יבריש / מילה לא קיימת",
+  syntaxCollapse: "קריסת תחביר",
+  speakerFatigue: "פסקה ארוכה — חשד להחלפת דובר",
+  phoneticSuspect: "חשוד פונטי (לא/לו, מספרים)",
   phoneticNonsense: "הזיה פונטית",
   phoneticSimilarity: "דמיון פונטי",
   speakerMismatch: "שיוך דובר חשוד",
-  longMonologue: "מונולוג ארוך",
+  negationFlip: "היפוך שלילה",
   smoothing: "החלקת עדות",
   semanticGap: "פער סמנטי",
-  negationFlip: "היפוך שלילה",
   omission: "השמטה",
   technicalTerm: "מונח מקצועי",
+  stylistic: "סגנון חריג",
 };
 
 function timestampToSeconds(ts: string): number {
@@ -264,13 +268,22 @@ export default function AnalysisResults({
                       </div>
                     </TableCell>
 
-                    {/* Col 2: Original Text — Editable */}
-                    <TableCell className="align-top py-4">
+                    {/* Col 2: Original Text — Editable + red highlight for suspicious */}
+                    <TableCell className={`align-top py-4 ${
+                      item.riskScore === "high" && !item.humanVerified ? "bg-rose/[0.06]" :
+                      item.riskScore === "medium" && !item.humanVerified ? "bg-amber/[0.04]" : ""
+                    }`}>
                       <textarea
                         value={item.originalText}
                         onChange={(e) => updateRow(index, { originalText: e.target.value, humanVerified: true })}
                         rows={3}
-                        className="w-full resize-y rounded border border-border bg-white px-2 py-1.5 text-sm leading-relaxed text-foreground outline-none focus:border-indigo/30 focus:ring-2 focus:ring-indigo/20"
+                        className={`w-full resize-y rounded border px-2 py-1.5 text-sm leading-relaxed text-foreground outline-none focus:border-indigo/30 focus:ring-2 focus:ring-indigo/20 ${
+                          item.riskScore === "high" && !item.humanVerified
+                            ? "border-rose/30 bg-rose/[0.04]"
+                            : item.riskScore === "medium" && !item.humanVerified
+                              ? "border-amber/30 bg-amber/[0.03]"
+                              : "border-border bg-white"
+                        }`}
                         dir="rtl"
                       />
                     </TableCell>
