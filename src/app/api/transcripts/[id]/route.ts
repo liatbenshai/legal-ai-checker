@@ -1,12 +1,22 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const envError = validateEnvVars(
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    );
+    if (envError) return envError;
+
     const { id } = await params;
+
+    console.log(`[transcripts/${id}] Fetching transcript`);
+
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -18,14 +28,12 @@ export async function GET(
       .eq("id", id)
       .single();
 
-    if (error || !data) {
-      return NextResponse.json(
-        { error: "הרשומה לא נמצאה" },
-        { status: 404 }
-      );
+    if (error) {
+      console.error(`[transcripts/${id}] Supabase error:`, error);
+      return jsonResponse({ error: "תמליל לא נמצא" }, 404);
     }
 
-    return NextResponse.json({
+    return jsonResponse({
       id: data.id,
       fileName: data.file_name,
       status: data.status,
@@ -34,10 +42,6 @@ export async function GET(
       discrepancies: data.analysis_result?.discrepancies || [],
     });
   } catch (error) {
-    console.error("Transcript fetch error:", error);
-    return NextResponse.json(
-      { error: "שגיאה בטעינת הנתונים" },
-      { status: 500 }
-    );
+    return errorResponse("transcripts/[id]", error, "שגיאה בטעינת התמליל");
   }
 }

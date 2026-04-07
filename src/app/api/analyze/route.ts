@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import type { Discrepancy } from "@/lib/types";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 const SYSTEM_PROMPT = `אתה מבקר תמלילים משפטיים בכיר. עליך להשוות בין טקסט ה-PDF (פרוטוקול בית משפט) לבין תמליל ה-Whisper (האודיו המדויק).
 זהה טעויות קריטיות שנובעות מ-AI:
@@ -39,6 +38,7 @@ function chunkText(text: string, maxChars: number): string[] {
 }
 
 async function analyzeChunk(
+  openai: OpenAI,
   pdfChunk: string,
   whisperChunk: string
 ): Promise<Discrepancy[]> {
@@ -80,37 +80,45 @@ async function analyzeChunk(
         explanation: item.explanation || "",
       })
     );
-  } catch {
-    console.error("Failed to parse GPT response:", content);
+  } catch (parseError) {
+    console.error("[analyze] Failed to parse GPT response:", content);
+    console.error("[analyze] Parse error:", parseError);
     return [];
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    // Validate env vars
+    const envError = validateEnvVars("OPENAI_API_KEY");
+    if (envError) return envError;
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
     const body = await request.json();
     const { pdfText, whisperText } = body;
 
     if (!pdfText || !whisperText) {
-      return NextResponse.json(
-        { error: "חסר טקסט PDF או תמליל Whisper" },
-        { status: 400 }
-      );
+      return jsonResponse({ error: "חסר טקסט PDF או תמליל Whisper" }, 400);
     }
+
+    console.log(`[analyze] PDF text: ${pdfText.length} chars, Whisper text: ${whisperText.length} chars`);
 
     const pdfChunks = chunkText(pdfText, MAX_CHUNK_CHARS);
     const whisperChunks = chunkText(whisperText, MAX_CHUNK_CHARS);
 
-    // Match chunks by index (best effort alignment)
     const numChunks = Math.max(pdfChunks.length, whisperChunks.length);
+    console.log(`[analyze] Processing ${numChunks} chunk(s)`);
+
     const allDiscrepancies: Discrepancy[] = [];
 
     for (let i = 0; i < numChunks; i++) {
+      console.log(`[analyze] Analyzing chunk ${i + 1}/${numChunks}`);
       const pdfChunk = pdfChunks[Math.min(i, pdfChunks.length - 1)];
       const whisperChunk =
         whisperChunks[Math.min(i, whisperChunks.length - 1)];
 
-      const discrepancies = await analyzeChunk(pdfChunk, whisperChunk);
+      const discrepancies = await analyzeChunk(openai, pdfChunk, whisperChunk);
       allDiscrepancies.push(...discrepancies);
     }
 
@@ -123,15 +131,14 @@ export async function POST(request: NextRequest) {
       return timeToSeconds(a.timestamp) - timeToSeconds(b.timestamp);
     });
 
-    return NextResponse.json({
+    console.log(`[analyze] Complete — found ${allDiscrepancies.length} discrepancies`);
+
+    return jsonResponse({
       discrepancies: allDiscrepancies,
       totalFound: allDiscrepancies.length,
       chunksAnalyzed: numChunks,
     });
   } catch (error) {
-    console.error("Analysis error:", error);
-    const message =
-      error instanceof Error ? error.message : "שגיאה בניתוח הטקסטים";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return errorResponse("analyze", error, "שגיאה בניתוח הטקסטים");
   }
 }

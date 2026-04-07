@@ -1,12 +1,20 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 export async function GET() {
   try {
+    const envError = validateEnvVars(
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    );
+    if (envError) return envError;
+
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
+
+    console.log("[transcripts] Fetching transcript list");
 
     const { data, error } = await supabase
       .from("transcripts")
@@ -15,14 +23,10 @@ export async function GET() {
       .limit(50);
 
     if (error) {
-      console.error("Supabase error:", error);
-      return NextResponse.json(
-        { error: "שגיאה בטעינת הנתונים" },
-        { status: 500 }
-      );
+      console.error("[transcripts] Supabase error:", error);
+      return jsonResponse({ error: "שגיאה בטעינת הנתונים" }, 500);
     }
 
-    // Add discrepancy counts
     const transcripts = (data || []).map((t) => {
       const discrepancies = t.analysis_result?.discrepancies || [];
       return {
@@ -37,12 +41,10 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ transcripts });
+    console.log(`[transcripts] Returning ${transcripts.length} transcripts`);
+
+    return jsonResponse({ transcripts });
   } catch (error) {
-    console.error("Transcripts list error:", error);
-    return NextResponse.json(
-      { error: "שגיאה בטעינת הנתונים" },
-      { status: 500 }
-    );
+    return errorResponse("transcripts", error, "שגיאה בטעינת הנתונים");
   }
 }
