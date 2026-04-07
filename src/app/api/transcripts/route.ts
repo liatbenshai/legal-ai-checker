@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { DB_TABLE } from "@/lib/constants";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 // Never cache — always fetch fresh data from Supabase
@@ -23,7 +24,7 @@ export async function GET() {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { data, error } = await supabase
-      .from("transcripts")
+      .from(DB_TABLE)
       .select("id, file_name, status, created_at, analysis_result")
       .order("created_at", { ascending: false })
       .limit(50);

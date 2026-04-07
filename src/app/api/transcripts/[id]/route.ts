@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { DB_TABLE } from "@/lib/constants";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 export async function GET(
@@ -23,7 +24,7 @@ export async function GET(
     );
 
     const { data, error } = await supabase
-      .from("transcripts")
+      .from(DB_TABLE)
       .select("*")
       .eq("id", id)
       .single();

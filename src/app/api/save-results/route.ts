@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { Discrepancy } from "@/lib/types";
+import { DB_TABLE } from "@/lib/constants";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 export async function POST(request: NextRequest) {
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
 
       try {
         const { data, error } = await supabase
-          .from("transcripts")
+          .from(DB_TABLE)
           .update({
             analysis_result: analysisResult,
             status: "done",
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
         }));
 
         const { data, error } = await supabase
-          .from("transcripts")
+          .from(DB_TABLE)
           .insert(insertPayload)
           .select("id, file_name, created_at")
           .single();
