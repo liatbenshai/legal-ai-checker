@@ -36,15 +36,24 @@ interface AnalysisResultsProps {
 
 const significanceConfig = {
   "קריטי": {
+    label: "קריטי",
     color: "bg-rose/10 text-rose border-rose/20",
+    rowBg: "bg-rose/[0.04] hover:bg-rose/[0.08]",
+    dot: "bg-rose",
     icon: AlertTriangle,
   },
   "בינוני": {
+    label: "בינוני",
     color: "bg-amber/10 text-amber border-amber/20",
+    rowBg: "bg-amber/[0.03] hover:bg-amber/[0.06]",
+    dot: "bg-amber",
     icon: AlertCircle,
   },
   "נמוך": {
+    label: "נמוך",
     color: "bg-emerald/10 text-emerald border-emerald/20",
+    rowBg: "hover:bg-muted/50",
+    dot: "bg-emerald",
     icon: Info,
   },
 } as const;
@@ -142,10 +151,10 @@ export default function AnalysisResults({
           </div>
           <div className="text-center">
             <h3 className="text-xl font-bold text-foreground">
-              לא נמצאו שגיאות
+              לא נמצאו שגיאות מהותיות
             </h3>
             <p className="mt-2 text-muted-foreground">
-              התמלול תואם לאודיו — לא זוהו אי-התאמות
+              הפרוטוקול תואם להקלטה — לא זוהו אי-התאמות שמשנות משמעות
             </p>
           </div>
         </CardContent>
@@ -202,12 +211,12 @@ export default function AnalysisResults({
         </Card>
       </div>
 
-      {/* Results Table */}
+      {/* Results Table — 3 Legal Columns */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-indigo" />
-            תוצאות הניתוח — {discrepancies.length} שגיאות זוהו
+            תוצאות הניתוח — {discrepancies.length} ממצאים
           </CardTitle>
           <div className="flex items-center gap-2">
             {onExportDocx && (
@@ -260,25 +269,26 @@ export default function AnalysisResults({
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="w-[100px] text-right font-bold">
-                  זמן
+                {/* Column 1: Source (PDF) */}
+                <TableHead className="text-right font-bold text-base w-[35%]">
+                  מקור (PDF)
                 </TableHead>
-                <TableHead className="text-right font-bold">
-                  טקסט מקור (PDF)
+                {/* Column 2: Correction (Audio) */}
+                <TableHead className="text-right font-bold text-base w-[35%]">
+                  תיקון (מהאודיו)
                 </TableHead>
-                <TableHead className="text-right font-bold">
-                  תיקון מוצע (אודיו)
+                {/* Column 3: Significance & Explanation */}
+                <TableHead className="text-right font-bold text-base w-[30%]">
+                  משמעות וסיווג
                 </TableHead>
-                <TableHead className="w-[120px] text-right font-bold">
-                  חומרה
-                </TableHead>
-                <TableHead className="text-right font-bold">הסבר</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {discrepancies.map((item, index) => {
-                const config = significanceConfig[item.significance];
-                const IconComponent = config.icon;
+                const cfg =
+                  significanceConfig[item.significance] ||
+                  significanceConfig["נמוך"];
+                const IconComponent = cfg.icon;
                 const isActive = index === activeRowIndex;
                 const isEditing = editingIndex === index;
 
@@ -286,37 +296,40 @@ export default function AnalysisResults({
                   <TableRow
                     key={index}
                     id={`result-row-${index}`}
-                    className={`transition-colors duration-300 ${
+                    className={`transition-colors duration-300 border-b ${
                       isActive
                         ? "bg-indigo/[0.08] ring-1 ring-inset ring-indigo/20"
-                        : item.significance === "קריטי"
-                          ? "bg-rose/[0.02] hover:bg-rose/[0.05]"
-                          : "hover:bg-muted/50"
+                        : cfg.rowBg
                     }`}
                   >
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={`gap-1.5 font-mono ${
-                          isActive
-                            ? "text-indigo font-bold"
-                            : "text-indigo hover:text-indigo-dark"
-                        }`}
-                        onClick={() => onTimestampClick?.(item.timestamp)}
-                      >
-                        <Play
-                          className={`h-3.5 w-3.5 ${isActive ? "animate-pulse" : ""}`}
-                        />
-                        {item.timestamp}
-                      </Button>
+                    {/* ── Column 1: מקור (PDF) ── */}
+                    <TableCell className="align-top py-4">
+                      <div className="space-y-2">
+                        {/* Timestamp button */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={`gap-1.5 font-mono text-xs px-2 py-1 h-auto ${
+                            isActive
+                              ? "text-indigo font-bold"
+                              : "text-indigo hover:text-indigo-dark"
+                          }`}
+                          onClick={() => onTimestampClick?.(item.timestamp)}
+                        >
+                          <Play
+                            className={`h-3 w-3 ${isActive ? "animate-pulse" : ""}`}
+                          />
+                          {item.timestamp}
+                        </Button>
+                        {/* PDF text */}
+                        <p className="text-sm leading-relaxed text-foreground">
+                          {item.originalText}
+                        </p>
+                      </div>
                     </TableCell>
-                    <TableCell>
-                      <span className="rounded bg-rose/10 px-1.5 py-0.5 text-sm leading-relaxed text-rose-light line-through decoration-rose/40">
-                        {item.originalText}
-                      </span>
-                    </TableCell>
-                    <TableCell className="min-w-[200px]">
+
+                    {/* ── Column 2: תיקון (מהאודיו) ── */}
+                    <TableCell className="align-top py-4">
                       {isEditing ? (
                         <textarea
                           value={editValue}
@@ -330,28 +343,32 @@ export default function AnalysisResults({
                           placeholder="הקלד תיקון..."
                         />
                       ) : (
-                        <span
-                          className="cursor-pointer rounded bg-emerald/10 px-1.5 py-0.5 text-sm font-medium leading-relaxed text-emerald transition-colors hover:bg-emerald/20"
+                        <p
+                          className="cursor-pointer text-sm leading-relaxed text-foreground rounded px-1 py-0.5 transition-colors hover:bg-indigo/5"
                           onClick={() =>
                             startEditing(index, item.correctedText)
                           }
-                          title="לחץ לעריכה — Shift+Enter לשורה חדשה, Enter לשמירה"
+                          title="לחץ לעריכה"
                         >
                           {item.correctedText}
-                        </span>
+                        </p>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={`gap-1 ${config.color}`}
-                      >
-                        <IconComponent className="h-3 w-3" />
-                        {item.significance}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="max-w-[250px] text-sm text-muted-foreground">
-                      {item.explanation}
+
+                    {/* ── Column 3: משמעות וסיווג ── */}
+                    <TableCell className="align-top py-4">
+                      <div className="space-y-2">
+                        <Badge
+                          variant="outline"
+                          className={`gap-1.5 text-sm px-2.5 py-1 ${cfg.color}`}
+                        >
+                          <IconComponent className="h-3.5 w-3.5" />
+                          {cfg.label}
+                        </Badge>
+                        <p className="text-sm leading-relaxed text-muted-foreground">
+                          {item.explanation}
+                        </p>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
