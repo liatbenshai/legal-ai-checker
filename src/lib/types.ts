@@ -1,15 +1,21 @@
+/** A flagged zone in the PDF text that needs human review */
 export interface Discrepancy {
   timestamp: string;
+  /** The original text from the PDF protocol */
   originalText: string;
+  /** Human-entered correction after listening to audio */
   correctedText: string;
   significance: "קריטי" | "בינוני" | "נמוך";
+  /** AI-generated explanation of why this zone is suspicious */
   explanation: string;
-  /** AI-assigned risk score: high / medium / low */
+  /** AI-assigned risk score */
   riskScore?: "high" | "medium" | "low";
-  /** Why the AI flagged this as high-risk */
+  /** Category of suspicion */
   riskReason?: string;
-  /** Has a human reviewed and verified this row? */
+  /** Has a human reviewed and verified/corrected this row? */
   humanVerified?: boolean;
+  /** Free-form auditor notes */
+  auditorNotes?: string;
 }
 
 export interface WhisperSegment {

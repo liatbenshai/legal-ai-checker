@@ -3,102 +3,90 @@ import OpenAI from "openai";
 import type { Discrepancy } from "@/lib/types";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
-// ── Legal proofreader prompt — PDF is truth, Whisper is fallible ──
-const SYSTEM_PROMPT = `אתה מבקר תמלילים משפטיים בכיר עם 30 שנות ניסיון בפרוטוקולים של בתי משפט בישראל.
+// ── Suspicion Engine prompt — scan PDF for anomalies ────────────────
+const SYSTEM_PROMPT = `אתה מבקר תמלילים משפטיים בכיר עם 30 שנות ניסיון.
 
-## המשימה
-השוואה בין הפרוטוקול הרשמי (PDF) לתמלול אוטומטי של ההקלטה (Whisper).
+## תפקידך: סורק חשדות (Suspicion Engine)
+אתה לא מתקן את הפרוטוקול. אתה סורק אותו ומסמן "אזורי חשד" שדורשים בדיקה אנושית.
+ה-PDF הוא הבסיס. תמליל ה-Whisper (אם סופק) הוא כלי עזר שגיא בלבד.
 
-## כללי יסוד
+## מה לסמן כחשוד:
 
-### ה-PDF הוא הרשומה הרשמית
-- ה-PDF הוא הפרוטוקול הרשמי של בית המשפט.
-- Whisper הוא כלי עזר שגיא (FALLIBLE). הוא עושה טעויות בשמות, מונחים, ומספרים.
-- אם Whisper מציג גרסה שונה ואתה לא בטוח מי צודק — **אל תדווח שגיאה**.
-- דווח שגיאה רק כשיש ודאות גבוהה שהפרוטוקול (PDF) טעה ביחס למה שנאמר בפועל.
+### 🔴 חשד גבוה (high) — דורש בדיקה מיידית:
 
-### Whisper טועה בתדירות גבוהה ב:
-- שמות משפחה לא שכיחים (למשל "זמישלני" עשוי להפוך ל-"דה משלמי" — זו טעות של Whisper, לא של ה-PDF)
-- מונחים רפואיים/מדעיים (למשל "סומטית", "לונגיטודינליות", "פרופסיה")
-- מספרי תיק, כתובות, ומזהים
-- **אם Whisper משנה שם או מונח מקצועי — זו טעות של Whisper. אל תדווח.**
+**הזיות פונטיות (Phonetic Nonsense):**
+- מילים שנשמעות כמו עברית אבל אינן קיימות בשפה
+- שמות שנראים מעוותים או לא טבעיים
+- מונחים שנראים כמו תרגום מכונה כושל
+- דוגמאות: "דה משלמי" במקום "זמישלני", "מלולציה" במקום "הומולוגציה"
 
-## מילון משפטי ומקצועי מוגן
-המילים הבאות הן נכונות כפי שהן. אל "תתקן" אותן למילים נפוצות יותר:
-זמישלני, פרופסיה, סומטית, לונגיטודינליות, אנמנזה, פתולוגיה, אטיולוגיה,
-קוגניטיבי, רטרואקטיבי, פרוספקטיבי, אמבולטורי, הומולוגציה, אינדיקציה,
-קונטרה-אינדיקציה, דיפרנציאלית, אפידמיולוגי, קאוזלי, פרוגנוזה
+**מונולוגים ארוכים (>45 שניות ללא החלפת דובר):**
+- קטע טקסט ארוך המיוחס לדובר אחד ללא הפסקה
+- חשוד להחלפת דובר שלא תועדה
 
-## היסוסים ושתיקות — חובה לשמור!
-אם העד מהסס או מגמגם באודיו ("לא... אני... כן"), וה-PDF השמיט את ההיסוס וכתב רק "כן" —
-**זו שגיאה קריטית.** היסוסים משפיעים על מהימנות העדות ועל הרושם שהשופט מקבל.
+**שיוך דובר חשוד:**
+- משפט שלא הגיוני שהשופט/העד/העורך דין אמר אותו
+- מעבר פתאומי בסגנון הדיבור באמצע קטע של אותו דובר
 
-## מה לא לדווח (רעש):
-- ❌ רווחים חסרים אחרי שם דובר
-- ❌ הבדלי פיסוק (נקודה, פסיק, סימן שאלה)
-- ❌ הבדלי עיצוב ופורמט
-- ❌ שינויי ניסוח קלים שאינם משנים משמעות
-- ❌ הבדלים שנובעים מטעות של Whisper (לא של הפרוטוקול)
+**היפוכי שלילה:**
+- "הוא כן הגיע" לעומת "הוא לא הגיע" — בדוק אם ה"לא" נבלע
+- תשובות קצרות ("כן", "לא") שאולי הופכו
 
-## מה כן לדווח — סיווג:
+### 🟡 חשד בינוני (medium):
 
-### 🔴 קריטי — שינוי משמעות העדות:
-- השמטה או הוספה של "לא" (הופך עדות חיובית לשלילית)
-- החלפת "כן" ב"לא" או להיפך
-- שיוך דובר שגוי: הפרוטוקול מייחס משפט לשופט כשעורך הדין אמר אותו, או להיפך (קריטי!)
-- השמטת היסוסים של עד שמשפיעים על מהימנות ("לא... אני... כן" הפך ל"כן")
-- השמטת בכי, שתיקה ארוכה, או תגובה רגשית שמשפיעה על רושם העד
-- קיפול שתיקות: פער ארוך באודיו ש"קופל" בפרוטוקול כאילו העד ענה מיד
-- שינוי שמות של אנשים, מקומות, חברות (רק אם ה-PDF שגה, לא Whisper)
-- שינוי מספרים, סכומים, תאריכים, כתובות
-- השמטת משפט שלם או חלק מהותי ממשפט
-- שינוי נושא/מושא ("הוא"/"היא", "שלי"/"שלו")
+**"החלקת" עדות (Smoothing):**
+- משפט שוטף ומנוסח היטב שנראה "טוב מדי" לעדות חיה
+- חשד שהיסוסים, גמגומים, או חזרות הוסרו
+- העד "ענה" מיד — חשוד אם לא היה היסוס
 
-### 🟡 בינוני — שינוי גוון העדות:
-- שינוי גוף דיבור ("אמרתי" במקום "אמרת")
-- החלפת מילים נרדפות שמשנות גוון ("סירב" ≠ "לא רצה")
-- השמטת מילות קישור שמשנות הקשר ("למרות ש-", "אבל")
-- "החלקה" של עדות — הפרוטוקול מחליק ניסוח מגומגם לניסוח שוטף
+**פערים סמנטיים:**
+- משפטים שלא עוקבים הגיונית אחד אחרי השני
+- שאלה שהתשובה עליה לא מתאימה
+- קטע שנראה כאילו חסר בו משהו
 
-### 🟢 נמוך — סטייה קלה שכדאי לציין:
-- שינוי זמן פועל ללא שינוי משמעות
-- מילה שנוספה/הושמטה ולא משנה את התמונה הכללית
+### 🟢 חשד נמוך (low):
+- ניסוח לא טבעי שעשוי להיות סגנון הדובר
+- מונח מקצועי נדיר שכדאי לוודא
 
-## ציון חשד (Risk Score)
-לכל שגיאה, הוסף ציון חשד שמציין את ההסתברות שזו שגיאת AI אמיתית (ולא טעות של Whisper):
+## מה לא לסמן:
+- ❌ הבדלי פיסוק ורווחים
+- ❌ עיצוב וכותרות
+- ❌ הבדלים שנובעים רק מטעות Whisper
 
-- **high** — סבירות גבוהה לשגיאת AI: החלפת דובר, השמטת "לא", קיפול היסוסים, שם שהשתנה בפרוטוקול
-- **medium** — סבירות בינונית: דמיון פונטי שעשוי להיות טעות PDF או טעות Whisper, החלקת ניסוח
-- **low** — סבירות נמוכה: ייתכן שזו טעות Whisper ולא שגיאת פרוטוקול
+## מילון מוגן — אל תסמן כחשודים:
+זמישלני, פרופסיה, סומטית, לונגיטודינליות, אנמנזה, פתולוגיה,
+אטיולוגיה, קוגניטיבי, רטרואקטיבי, אמבולטורי, דיפרנציאלית,
+אפידמיולוגי, פרוגנוזה
 
-הוסף גם שדה riskReason שמסביר למה זה חשוד:
-- "phoneticSimilarity" — המילים נשמעות דומה אבל המשמעות שונה
-- "speakerMismatch" — שיוך דובר שגוי
-- "smoothing" — משפט מגומגם "הוחלק" לניסוח קצר
-- "technicalTerm" — מונח מקצועי נדיר שה-AI נוטה לפספס
-- "negationFlip" — היפוך חיוב/שלילה
-- "omission" — השמטת תוכן מהותי
+## פורמט
+החזר JSON בלבד:
+{"discrepancies": [{
+  "timestamp": "MM:SS",
+  "originalText": "הטקסט החשוד מה-PDF",
+  "correctedText": "",
+  "significance": "קריטי/בינוני/נמוך",
+  "explanation": "למה זה חשוד ומה לבדוק",
+  "riskScore": "high/medium/low",
+  "riskReason": "סוג החשד"
+}]}
 
-## פורמט התשובה
-החזר אובייקט JSON בלבד:
-{"discrepancies": [{ "timestamp": "MM:SS", "originalText": "הטקסט מהפרוטוקול (PDF)", "correctedText": "מה שנאמר בפועל באודיו", "significance": "קריטי/בינוני/נמוך", "explanation": "הסבר + השלכה משפטית", "riskScore": "high/medium/low", "riskReason": "סוג החשד" }]}
-
-אם לא נמצאו שגיאות מהותיות: {"discrepancies": []}`;
+שדה correctedText נשאר ריק — המתמלל האנושי ימלא אותו.
+אם לא נמצאו אזורים חשודים: {"discrepancies": []}`;
 
 // ── Chunking ───────────────────────────────────────────────────────
-const MAX_CHUNK_CHARS = 2000; // smaller chunks = more thorough analysis
+const MAX_CHUNK_CHARS = 2000;
 
 function chunkText(text: string, maxChars: number): string[] {
   const chunks: string[] = [];
-  const paragraphs = text.split(/\n/);
+  const lines = text.split(/\n/);
   let current = "";
 
-  for (const paragraph of paragraphs) {
-    if (current.length + paragraph.length + 1 > maxChars && current.length > 0) {
+  for (const line of lines) {
+    if (current.length + line.length + 1 > maxChars && current.length > 0) {
       chunks.push(current.trim());
       current = "";
     }
-    current += paragraph + "\n";
+    current += line + "\n";
   }
 
   if (current.trim()) {
@@ -108,69 +96,24 @@ function chunkText(text: string, maxChars: number): string[] {
   return chunks.length > 0 ? chunks : [text];
 }
 
-/**
- * Align PDF and Whisper chunks by splitting both to the same count.
- * If one text has more chunks, we pair them as best as possible.
- */
-function alignChunks(
-  pdfChunks: string[],
-  whisperChunks: string[]
-): Array<{ pdf: string; whisper: string; index: number }> {
-  const maxLen = Math.max(pdfChunks.length, whisperChunks.length);
-  const pairs: Array<{ pdf: string; whisper: string; index: number }> = [];
-
-  for (let i = 0; i < maxLen; i++) {
-    const pdfIdx = Math.min(
-      Math.round((i / maxLen) * pdfChunks.length),
-      pdfChunks.length - 1
-    );
-    const whisperIdx = Math.min(
-      Math.round((i / maxLen) * whisperChunks.length),
-      whisperChunks.length - 1
-    );
-    pairs.push({
-      pdf: pdfChunks[pdfIdx],
-      whisper: whisperChunks[whisperIdx],
-      index: i,
-    });
-  }
-
-  // Deduplicate identical pairs
-  const seen = new Set<string>();
-  return pairs.filter((p) => {
-    const key = `${p.pdf}|||${p.whisper}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-async function analyzeChunk(
+async function scanChunk(
   openai: OpenAI,
   pdfChunk: string,
-  whisperChunk: string,
+  whisperChunk: string | null,
   chunkIndex: number,
   totalChunks: number
 ): Promise<Discrepancy[]> {
-  const userMessage = `## קטע ${chunkIndex + 1} מתוך ${totalChunks}
+  const userParts = [`## קטע ${chunkIndex + 1} מתוך ${totalChunks}\n\n### טקסט הפרוטוקול (PDF):\n${pdfChunk}`];
 
-### טקסט PDF (פרוטוקול בית המשפט):
-${pdfChunk}
+  if (whisperChunk) {
+    userParts.push(`\n\n### תמליל Whisper (כלי עזר בלבד — שגיא):\n${whisperChunk}`);
+  }
 
-### תמליל Whisper (האודיו המקורי — מקור האמת):
-${whisperChunk}
+  userParts.push("\n\nסרוק את טקסט ה-PDF. סמן אזורים חשודים שדורשים בדיקה אנושית.");
 
-השווה מילה-במילה. מצא כל הבדל.`;
+  const userMessage = userParts.join("");
 
-  // Log the exact prompt being sent
-  console.log(`\n${"=".repeat(70)}`);
-  console.log(`[analyze] PROMPT FOR CHUNK ${chunkIndex + 1}/${totalChunks}`);
-  console.log(`${"=".repeat(70)}`);
-  console.log(`[analyze] System prompt: ${SYSTEM_PROMPT.substring(0, 200)}...`);
-  console.log(`[analyze] User message (${userMessage.length} chars):`);
-  console.log(`[analyze] PDF chunk (${pdfChunk.length} chars): "${pdfChunk.substring(0, 150)}..."`);
-  console.log(`[analyze] Whisper chunk (${whisperChunk.length} chars): "${whisperChunk.substring(0, 150)}..."`);
-  console.log(`${"=".repeat(70)}\n`);
+  console.log(`[analyze] Scanning chunk ${chunkIndex + 1}/${totalChunks} (${pdfChunk.length} chars)`);
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -178,18 +121,13 @@ ${whisperChunk}
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userMessage },
     ],
-    temperature: 0.05, // near-zero for maximum consistency
+    temperature: 0.05,
     response_format: { type: "json_object" },
     max_tokens: 4000,
   });
 
   const content = response.choices[0]?.message?.content;
-  console.log(`[analyze] GPT response for chunk ${chunkIndex + 1}:`, content?.substring(0, 300));
-
-  if (!content) {
-    console.warn(`[analyze] Empty response for chunk ${chunkIndex + 1}`);
-    return [];
-  }
+  if (!content) return [];
 
   try {
     const parsed = JSON.parse(content);
@@ -197,34 +135,25 @@ ${whisperChunk}
       ? parsed
       : Array.isArray(parsed.discrepancies)
         ? parsed.discrepancies
-        : Array.isArray(parsed.errors)
-          ? parsed.errors
-          : Array.isArray(parsed.results)
-            ? parsed.results
-            : [];
+        : [];
 
-    const discrepancies = items.map(
+    const results = items.map(
       (item: Record<string, string>): Discrepancy => ({
         timestamp: item.timestamp || "00:00",
         originalText: item.originalText || "",
         correctedText: item.correctedText || "",
-        significance:
-          (item.significance as Discrepancy["significance"]) || "נמוך",
+        significance: (item.significance as Discrepancy["significance"]) || "נמוך",
         explanation: item.explanation || "",
         riskScore: (item.riskScore as Discrepancy["riskScore"]) || "low",
         riskReason: item.riskReason || "",
         humanVerified: false,
+        auditorNotes: "",
       })
     );
 
-    console.log(
-      `[analyze] Chunk ${chunkIndex + 1}: found ${discrepancies.length} discrepancies ` +
-        `(${discrepancies.filter((d: Discrepancy) => d.significance === "קריטי").length} critical)`
-    );
-
-    return discrepancies;
+    console.log(`[analyze] Chunk ${chunkIndex + 1}: ${results.length} suspicious zones found`);
+    return results;
   } catch (parseError) {
-    console.error("[analyze] Failed to parse GPT response:", content);
     console.error("[analyze] Parse error:", parseError);
     return [];
   }
@@ -237,78 +166,54 @@ export async function POST(request: NextRequest) {
     if (envError) return envError;
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
     const body = await request.json();
     const { pdfText, whisperText } = body;
 
-    if (!pdfText || !whisperText) {
-      return jsonResponse({ error: "חסר טקסט PDF או תמליל Whisper" }, 400);
+    if (!pdfText) {
+      return jsonResponse({ error: "חסר טקסט PDF" }, 400);
     }
 
-    console.log(`\n${"#".repeat(70)}`);
-    console.log(`[analyze] === NEW ANALYSIS ===`);
-    console.log(`[analyze] PDF text: ${pdfText.length} chars`);
-    console.log(`[analyze] Whisper text: ${whisperText.length} chars`);
-    console.log(`[analyze] PDF preview: "${pdfText.substring(0, 200)}..."`);
-    console.log(`[analyze] Whisper preview: "${whisperText.substring(0, 200)}..."`);
-    console.log(`${"#".repeat(70)}\n`);
+    console.log(`[analyze] === SUSPICION SCAN ===`);
+    console.log(`[analyze] PDF: ${pdfText.length} chars`);
+    if (whisperText) console.log(`[analyze] Whisper: ${whisperText.length} chars (advisory only)`);
 
     const pdfChunks = chunkText(pdfText, MAX_CHUNK_CHARS);
-    const whisperChunks = chunkText(whisperText, MAX_CHUNK_CHARS);
+    const whisperChunks = whisperText ? chunkText(whisperText, MAX_CHUNK_CHARS) : null;
 
-    console.log(
-      `[analyze] Split into ${pdfChunks.length} PDF chunks and ${whisperChunks.length} Whisper chunks`
-    );
+    console.log(`[analyze] ${pdfChunks.length} PDF chunks`);
 
-    const pairs = alignChunks(pdfChunks, whisperChunks);
-    console.log(`[analyze] Aligned into ${pairs.length} comparison pairs`);
+    const allFlags: Discrepancy[] = [];
 
-    const allDiscrepancies: Discrepancy[] = [];
+    for (let i = 0; i < pdfChunks.length; i++) {
+      const whisperChunk = whisperChunks
+        ? whisperChunks[Math.min(i, whisperChunks.length - 1)]
+        : null;
 
-    for (const pair of pairs) {
-      const discrepancies = await analyzeChunk(
-        openai,
-        pair.pdf,
-        pair.whisper,
-        pair.index,
-        pairs.length
-      );
-      allDiscrepancies.push(...discrepancies);
+      const flags = await scanChunk(openai, pdfChunks[i], whisperChunk, i, pdfChunks.length);
+      allFlags.push(...flags);
     }
 
     // Sort by timestamp
-    allDiscrepancies.sort((a, b) => {
-      const timeToSeconds = (t: string) => {
-        const parts = t.split(":").map(Number);
-        return (parts[0] || 0) * 60 + (parts[1] || 0);
+    allFlags.sort((a, b) => {
+      const toSec = (t: string) => {
+        const p = t.split(":").map(Number);
+        return (p[0] || 0) * 60 + (p[1] || 0);
       };
-      return timeToSeconds(a.timestamp) - timeToSeconds(b.timestamp);
+      return toSec(a.timestamp) - toSec(b.timestamp);
     });
 
-    // Summary
-    const critical = allDiscrepancies.filter(
-      (d) => d.significance === "קריטי"
-    ).length;
-    const medium = allDiscrepancies.filter(
-      (d) => d.significance === "בינוני"
-    ).length;
-    const low = allDiscrepancies.filter(
-      (d) => d.significance === "נמוך"
-    ).length;
+    const high = allFlags.filter((d) => d.riskScore === "high").length;
+    const medium = allFlags.filter((d) => d.riskScore === "medium").length;
 
-    console.log(`\n${"#".repeat(70)}`);
-    console.log(`[analyze] === ANALYSIS COMPLETE ===`);
-    console.log(`[analyze] Total: ${allDiscrepancies.length} discrepancies`);
-    console.log(`[analyze] קריטי: ${critical} | בינוני: ${medium} | נמוך: ${low}`);
-    console.log(`${"#".repeat(70)}\n`);
+    console.log(`[analyze] === SCAN COMPLETE: ${allFlags.length} zones (${high} high, ${medium} medium) ===`);
 
     return jsonResponse({
-      discrepancies: allDiscrepancies,
-      totalFound: allDiscrepancies.length,
-      chunksAnalyzed: pairs.length,
-      summary: { critical, medium, low },
+      discrepancies: allFlags,
+      totalFound: allFlags.length,
+      chunksAnalyzed: pdfChunks.length,
+      summary: { high, medium, low: allFlags.length - high - medium },
     });
   } catch (error) {
-    return errorResponse("analyze", error, "שגיאה בניתוח הטקסטים");
+    return errorResponse("analyze", error, "שגיאה בסריקת הפרוטוקול");
   }
 }

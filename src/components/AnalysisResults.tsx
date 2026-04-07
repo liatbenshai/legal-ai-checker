@@ -37,34 +37,23 @@ interface AnalysisResultsProps {
   onExportDocx?: (discrepancies: Discrepancy[]) => void;
 }
 
-const significanceConfig = {
-  "קריטי": {
-    label: "קריטי",
-    color: "bg-rose/10 text-rose border-rose/20",
-    rowBg: "bg-rose/[0.04] hover:bg-rose/[0.08]",
-    icon: AlertTriangle,
-  },
-  "בינוני": {
-    label: "בינוני",
-    color: "bg-amber/10 text-amber border-amber/20",
-    rowBg: "bg-amber/[0.03] hover:bg-amber/[0.06]",
-    icon: AlertCircle,
-  },
-  "נמוך": {
-    label: "נמוך",
-    color: "bg-emerald/10 text-emerald border-emerald/20",
-    rowBg: "hover:bg-muted/50",
-    icon: Info,
-  },
-} as const;
-
 const riskConfig = {
   high: { label: "חשד גבוה", color: "text-rose border-rose/40 bg-rose/10", icon: Flame },
   medium: { label: "חשד בינוני", color: "text-amber border-amber/40 bg-amber/10", icon: AlertTriangle },
   low: { label: "חשד נמוך", color: "text-muted-foreground border-border bg-muted/50", icon: Info },
 } as const;
 
-const SEVERITY_OPTIONS: Discrepancy["significance"][] = ["קריטי", "בינוני", "נמוך"];
+const RISK_REASON_LABELS: Record<string, string> = {
+  phoneticNonsense: "הזיה פונטית",
+  phoneticSimilarity: "דמיון פונטי",
+  speakerMismatch: "שיוך דובר חשוד",
+  longMonologue: "מונולוג ארוך",
+  smoothing: "החלקת עדות",
+  semanticGap: "פער סמנטי",
+  negationFlip: "היפוך שלילה",
+  omission: "השמטה",
+  technicalTerm: "מונח מקצועי",
+};
 
 function timestampToSeconds(ts: string): number {
   const parts = ts.split(":").map(Number);
@@ -79,11 +68,6 @@ export default function AnalysisResults({
   onSave,
   onExportDocx,
 }: AnalysisResultsProps) {
-  const [editingField, setEditingField] = useState<{
-    index: number;
-    field: "correctedText" | "explanation";
-  } | null>(null);
-  const [editValue, setEditValue] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -97,74 +81,27 @@ export default function AnalysisResults({
     return -1;
   })();
 
-  // High-risk indices for "Jump to Next"
   const highRiskIndices = useMemo(
-    () =>
-      discrepancies
-        .map((d, i) => (d.riskScore === "high" && !d.humanVerified ? i : -1))
-        .filter((i) => i >= 0),
+    () => discrepancies
+      .map((d, i) => (d.riskScore === "high" && !d.humanVerified ? i : -1))
+      .filter((i) => i >= 0),
     [discrepancies]
   );
 
   const jumpToNextHighRisk = useCallback(() => {
     if (highRiskIndices.length === 0) return;
-    // Find the first high-risk after current audio position
     const currentIdx = activeRowIndex >= 0 ? activeRowIndex : -1;
     const nextIdx = highRiskIndices.find((i) => i > currentIdx) ?? highRiskIndices[0];
     const item = discrepancies[nextIdx];
     onTimestampClick?.(item.timestamp);
-    const row = document.getElementById(`result-row-${nextIdx}`);
-    row?.scrollIntoView({ behavior: "smooth", block: "center" });
+    document.getElementById(`result-row-${nextIdx}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highRiskIndices, activeRowIndex, discrepancies, onTimestampClick]);
 
-  const startEditing = useCallback(
-    (index: number, field: "correctedText" | "explanation", currentValue: string) => {
-      setEditingField({ index, field });
-      setEditValue(currentValue);
-    },
-    []
-  );
-
-  const commitEdit = useCallback(() => {
-    if (!editingField) return;
-    const { index, field } = editingField;
-    if (editValue !== discrepancies[index][field]) {
+  // Update a single field on a row
+  const updateRow = useCallback(
+    (index: number, updates: Partial<Discrepancy>) => {
       const updated = discrepancies.map((d, i) =>
-        i === index ? { ...d, [field]: editValue, humanVerified: true } : d
-      );
-      onDiscrepanciesChange?.(updated);
-      setHasUnsavedChanges(true);
-    }
-    setEditingField(null);
-  }, [editValue, editingField, discrepancies, onDiscrepanciesChange]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        commitEdit();
-      } else if (e.key === "Escape") {
-        setEditingField(null);
-      }
-    },
-    [commitEdit]
-  );
-
-  const changeSeverity = useCallback(
-    (index: number, newSeverity: Discrepancy["significance"]) => {
-      const updated = discrepancies.map((d, i) =>
-        i === index ? { ...d, significance: newSeverity, humanVerified: true } : d
-      );
-      onDiscrepanciesChange?.(updated);
-      setHasUnsavedChanges(true);
-    },
-    [discrepancies, onDiscrepanciesChange]
-  );
-
-  const toggleVerified = useCallback(
-    (index: number) => {
-      const updated = discrepancies.map((d, i) =>
-        i === index ? { ...d, humanVerified: !d.humanVerified } : d
+        i === index ? { ...d, ...updates } : d
       );
       onDiscrepanciesChange?.(updated);
       setHasUnsavedChanges(true);
@@ -190,8 +127,8 @@ export default function AnalysisResults({
 
   useEffect(() => {
     if (activeRowIndex >= 0) {
-      const row = document.getElementById(`result-row-${activeRowIndex}`);
-      row?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      document.getElementById(`result-row-${activeRowIndex}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [activeRowIndex]);
 
@@ -203,17 +140,16 @@ export default function AnalysisResults({
             <FileCheck className="h-10 w-10 text-emerald" />
           </div>
           <div className="text-center">
-            <h3 className="text-xl font-bold text-foreground">לא נמצאו שגיאות מהותיות</h3>
-            <p className="mt-2 text-muted-foreground">הפרוטוקול תואם להקלטה</p>
+            <h3 className="text-xl font-bold text-foreground">לא נמצאו אזורים חשודים</h3>
+            <p className="mt-2 text-muted-foreground">הפרוטוקול נראה תקין — לא זוהו אנומליות</p>
           </div>
         </CardContent>
       </Card>
     );
   }
 
-  const criticalCount = discrepancies.filter((d) => d.significance === "קריטי").length;
-  const mediumCount = discrepancies.filter((d) => d.significance === "בינוני").length;
-  const lowCount = discrepancies.filter((d) => d.significance === "נמוך").length;
+  const highCount = discrepancies.filter((d) => d.riskScore === "high").length;
+  const medCount = discrepancies.filter((d) => d.riskScore === "medium").length;
   const verifiedCount = discrepancies.filter((d) => d.humanVerified).length;
 
   return (
@@ -222,58 +158,58 @@ export default function AnalysisResults({
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Card className="border-rose/20 bg-rose/5">
           <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-lg bg-rose/10 p-2"><AlertTriangle className="h-5 w-5 text-rose" /></div>
-            <div><p className="text-2xl font-bold text-rose">{criticalCount}</p><p className="text-xs text-muted-foreground">קריטי</p></div>
+            <div className="rounded-lg bg-rose/10 p-2"><Flame className="h-5 w-5 text-rose" /></div>
+            <div><p className="text-2xl font-bold text-rose">{highCount}</p><p className="text-xs text-muted-foreground">חשד גבוה</p></div>
           </CardContent>
         </Card>
         <Card className="border-amber/20 bg-amber/5">
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-lg bg-amber/10 p-2"><AlertCircle className="h-5 w-5 text-amber" /></div>
-            <div><p className="text-2xl font-bold text-amber">{mediumCount}</p><p className="text-xs text-muted-foreground">בינוני</p></div>
+            <div><p className="text-2xl font-bold text-amber">{medCount}</p><p className="text-xs text-muted-foreground">חשד בינוני</p></div>
           </CardContent>
         </Card>
         <Card className="border-emerald/20 bg-emerald/5">
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-lg bg-emerald/10 p-2"><Info className="h-5 w-5 text-emerald" /></div>
-            <div><p className="text-2xl font-bold text-emerald">{lowCount}</p><p className="text-xs text-muted-foreground">נמוך</p></div>
+            <div><p className="text-2xl font-bold text-emerald">{discrepancies.length - highCount - medCount}</p><p className="text-xs text-muted-foreground">חשד נמוך</p></div>
           </CardContent>
         </Card>
         <Card className="border-indigo/20 bg-indigo/5">
           <CardContent className="flex items-center gap-3 p-4">
             <div className="rounded-lg bg-indigo/10 p-2"><ShieldCheck className="h-5 w-5 text-indigo" /></div>
-            <div><p className="text-2xl font-bold text-indigo">{verifiedCount}/{discrepancies.length}</p><p className="text-xs text-muted-foreground">אומתו</p></div>
+            <div><p className="text-2xl font-bold text-indigo">{verifiedCount}/{discrepancies.length}</p><p className="text-xs text-muted-foreground">נבדקו</p></div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Table */}
+      {/* Auditor Table */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-indigo" />
-            {discrepancies.length} ממצאים
+            {discrepancies.length} אזורים לבדיקה
           </CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {highRiskIndices.length > 0 && (
-              <Button variant="outline" size="sm" onClick={jumpToNextHighRisk} className="gap-1.5 border-rose/30 text-rose hover:bg-rose/10">
-                <SkipForward className="h-4 w-4" />
-                חשוד הבא ({highRiskIndices.length})
+              <Button variant="outline" size="sm" onClick={jumpToNextHighRisk}
+                className="gap-1.5 border-rose/30 text-rose hover:bg-rose/10">
+                <SkipForward className="h-4 w-4" />חשוד הבא ({highRiskIndices.length})
               </Button>
             )}
             {onExportDocx && (
-              <Button variant="outline" size="sm" onClick={() => onExportDocx(discrepancies)} className="gap-1.5 border-violet/30 text-violet hover:bg-violet/10">
-                <FileDown className="h-4 w-4" />DOCX
+              <Button variant="outline" size="sm" onClick={() => onExportDocx(discrepancies)}
+                className="gap-1.5 border-violet/30 text-violet hover:bg-violet/10">
+                <FileDown className="h-4 w-4" />ייצוא DOCX
               </Button>
             )}
             {onSave && (
               <Button
                 variant={saveSuccess ? "outline" : "default"} size="sm" onClick={handleSaveAll}
                 disabled={isSaving || (!hasUnsavedChanges && !saveSuccess)}
-                className={saveSuccess ? "gap-1.5 border-emerald/30 text-emerald" : "gap-1.5 bg-indigo hover:bg-indigo-dark"}
-              >
+                className={saveSuccess ? "gap-1.5 border-emerald/30 text-emerald" : "gap-1.5 bg-indigo hover:bg-indigo-dark"}>
                 {isSaving ? <><Loader2 className="h-4 w-4 animate-spin" />שומר...</> :
                   saveSuccess ? <><Check className="h-4 w-4" />נשמר</> :
-                    <><Save className="h-4 w-4" />שמור{hasUnsavedChanges && <span className="mr-1 h-2 w-2 rounded-full bg-amber" />}</>}
+                    <><Save className="h-4 w-4" />שמור התקדמות{hasUnsavedChanges && <span className="mr-1 h-2 w-2 rounded-full bg-amber" />}</>}
               </Button>
             )}
           </div>
@@ -282,19 +218,17 @@ export default function AnalysisResults({
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="text-right font-bold text-base w-[33%]">מקור (פרוטוקול PDF)</TableHead>
-                <TableHead className="text-right font-bold text-base w-[33%]">תיקון אנושי / אודיו</TableHead>
-                <TableHead className="text-right font-bold text-base w-[34%]">משמעות וסיווג הטעות</TableHead>
+                <TableHead className="text-right font-bold text-base w-[15%]">זמן ▶</TableHead>
+                <TableHead className="text-right font-bold text-base w-[40%]">טקסט מקורי (עריכה ישירה)</TableHead>
+                <TableHead className="text-right font-bold text-base w-[45%]">הערות מבקר + תיקון ידני</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {discrepancies.map((item, index) => {
-                const cfg = significanceConfig[item.significance] || significanceConfig["נמוך"];
                 const risk = riskConfig[item.riskScore || "low"];
                 const RiskIcon = risk.icon;
                 const isActive = index === activeRowIndex;
-                const isEditingCorrection = editingField?.index === index && editingField?.field === "correctedText";
-                const isEditingExplanation = editingField?.index === index && editingField?.field === "explanation";
+                const reasonLabel = RISK_REASON_LABELS[item.riskReason || ""] || item.riskReason || "";
 
                 return (
                   <TableRow
@@ -303,54 +237,81 @@ export default function AnalysisResults({
                     className={`transition-colors duration-300 border-b ${
                       isActive ? "bg-indigo/[0.08] ring-1 ring-inset ring-indigo/20" :
                       item.riskScore === "high" && !item.humanVerified ? "bg-rose/[0.04] border-r-4 border-r-rose" :
-                      cfg.rowBg
+                      item.riskScore === "medium" && !item.humanVerified ? "bg-amber/[0.02] border-r-4 border-r-amber" :
+                      item.humanVerified ? "bg-emerald/[0.02]" :
+                      "hover:bg-muted/50"
                     }`}
                   >
-                    {/* Col 1: מקור (PDF) */}
+                    {/* Col 1: Timestamp + Play + Risk Badge */}
                     <TableCell className="align-top py-4">
                       <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost" size="sm"
-                            className={`gap-1.5 font-mono text-xs px-2 py-1 h-auto ${isActive ? "text-indigo font-bold" : "text-indigo hover:text-indigo-dark"}`}
-                            onClick={() => onTimestampClick?.(item.timestamp)}
-                          >
-                            <Play className={`h-3 w-3 ${isActive ? "animate-pulse" : ""}`} />
-                            {item.timestamp}
-                          </Button>
-                          {/* Risk indicator */}
-                          {item.riskScore && item.riskScore !== "low" && (
-                            <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${risk.color}`}>
-                              <RiskIcon className="h-2.5 w-2.5" />
-                              {risk.label}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm leading-relaxed text-foreground">{item.originalText}</p>
+                        <Button
+                          variant="ghost" size="sm"
+                          className={`gap-1.5 font-mono text-sm px-2 py-1 h-auto ${isActive ? "text-indigo font-bold" : "text-indigo hover:text-indigo-dark"}`}
+                          onClick={() => onTimestampClick?.(item.timestamp)}
+                        >
+                          <Play className={`h-3.5 w-3.5 ${isActive ? "animate-pulse" : ""}`} />
+                          {item.timestamp}
+                        </Button>
+                        {item.riskScore && item.riskScore !== "low" && (
+                          <Badge variant="outline" className={`gap-1 text-[10px] ${risk.color}`}>
+                            <RiskIcon className="h-2.5 w-2.5" />{risk.label}
+                          </Badge>
+                        )}
+                        {reasonLabel && (
+                          <span className="block text-[10px] text-muted-foreground">{reasonLabel}</span>
+                        )}
                       </div>
                     </TableCell>
 
-                    {/* Col 2: תיקון */}
+                    {/* Col 2: Original Text — Editable */}
                     <TableCell className="align-top py-4">
-                      <div className="space-y-2">
-                        {isEditingCorrection ? (
+                      <textarea
+                        value={item.originalText}
+                        onChange={(e) => updateRow(index, { originalText: e.target.value, humanVerified: true })}
+                        rows={3}
+                        className="w-full resize-y rounded border border-border bg-white px-2 py-1.5 text-sm leading-relaxed text-foreground outline-none focus:border-indigo/30 focus:ring-2 focus:ring-indigo/20"
+                        dir="rtl"
+                      />
+                    </TableCell>
+
+                    {/* Col 3: Auditor Notes + Manual Correction */}
+                    <TableCell className="align-top py-4">
+                      <div className="space-y-3">
+                        {/* AI explanation */}
+                        <div className="rounded bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
+                          <span className="font-medium">AI: </span>{item.explanation}
+                        </div>
+
+                        {/* Manual correction */}
+                        <div>
+                          <label className="text-xs font-medium text-foreground mb-1 block">תיקון ידני:</label>
                           <textarea
-                            value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={commitEdit} onKeyDown={handleKeyDown} autoFocus rows={3}
-                            className="w-full resize-y rounded border border-indigo/30 bg-white px-2 py-1.5 text-sm leading-relaxed text-foreground outline-none ring-2 ring-indigo/20 focus:ring-indigo/40" dir="rtl"
+                            value={item.correctedText}
+                            onChange={(e) => updateRow(index, { correctedText: e.target.value, humanVerified: true })}
+                            rows={2}
+                            placeholder="הקלידו את הטקסט הנכון לאחר האזנה..."
+                            className="w-full resize-y rounded border border-border bg-white px-2 py-1.5 text-sm leading-relaxed text-foreground outline-none focus:border-indigo/30 focus:ring-2 focus:ring-indigo/20"
+                            dir="rtl"
                           />
-                        ) : (
-                          <p
-                            className="cursor-pointer text-sm leading-relaxed text-foreground rounded px-1 py-0.5 transition-colors hover:bg-indigo/5"
-                            onClick={() => startEditing(index, "correctedText", item.correctedText)}
-                            title="לחץ לעריכה"
-                          >
-                            {item.correctedText}
-                          </p>
-                        )}
-                        {/* Verified badge */}
+                        </div>
+
+                        {/* Auditor notes */}
+                        <div>
+                          <label className="text-xs font-medium text-foreground mb-1 block">הערות מבקר:</label>
+                          <textarea
+                            value={item.auditorNotes || ""}
+                            onChange={(e) => updateRow(index, { auditorNotes: e.target.value, humanVerified: true })}
+                            rows={1}
+                            placeholder="הערה חופשית..."
+                            className="w-full resize-y rounded border border-dashed border-border bg-muted/30 px-2 py-1 text-xs leading-relaxed text-foreground outline-none focus:border-indigo/30 focus:bg-white"
+                            dir="rtl"
+                          />
+                        </div>
+
+                        {/* Verified toggle */}
                         <button
-                          onClick={() => toggleVerified(index)}
+                          onClick={() => updateRow(index, { humanVerified: !item.humanVerified })}
                           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-all ${
                             item.humanVerified
                               ? "border-emerald/30 bg-emerald/10 text-emerald"
@@ -358,53 +319,8 @@ export default function AnalysisResults({
                           }`}
                         >
                           <ShieldCheck className="h-3 w-3" />
-                          {item.humanVerified ? "אומת ידנית" : "לסימון כאומת"}
+                          {item.humanVerified ? "בדיקת אנוש בוצעה ✓" : "לסימון כנבדק"}
                         </button>
-                      </div>
-                    </TableCell>
-
-                    {/* Col 3: משמעות וסיווג */}
-                    <TableCell className="align-top py-4">
-                      <div className="space-y-2">
-                        {/* Severity pills */}
-                        <div className="flex gap-1">
-                          {SEVERITY_OPTIONS.map((sev) => {
-                            const sevCfg = significanceConfig[sev];
-                            const isSelected = item.significance === sev;
-                            return (
-                              <button
-                                key={sev} onClick={() => changeSeverity(index, sev)}
-                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-all ${
-                                  isSelected ? sevCfg.color + " ring-1 ring-offset-1" : "border-border text-muted-foreground hover:bg-muted"
-                                }`}
-                              >
-                                {sevCfg.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {/* Risk reason tag */}
-                        {item.riskReason && (
-                          <span className="inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                            {item.riskReason}
-                          </span>
-                        )}
-                        {/* Explanation — editable */}
-                        {isEditingExplanation ? (
-                          <textarea
-                            value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={commitEdit} onKeyDown={handleKeyDown} autoFocus rows={3}
-                            className="w-full resize-y rounded border border-indigo/30 bg-white px-2 py-1.5 text-sm leading-relaxed text-foreground outline-none ring-2 ring-indigo/20 focus:ring-indigo/40" dir="rtl"
-                          />
-                        ) : (
-                          <p
-                            className="cursor-pointer text-sm leading-relaxed text-muted-foreground rounded px-1 py-0.5 transition-colors hover:bg-indigo/5"
-                            onClick={() => startEditing(index, "explanation", item.explanation)}
-                            title="לחץ לעריכה"
-                          >
-                            {item.explanation || "לחץ להוספת הסבר..."}
-                          </p>
-                        )}
                       </div>
                     </TableCell>
                   </TableRow>

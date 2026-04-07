@@ -97,7 +97,12 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
     ],
   });
 
-  const dataRows = discrepancies.map(
+  // Only include rows that have been human-verified or manually corrected
+  const exportRows = discrepancies.filter(
+    (d) => d.humanVerified || d.correctedText.trim().length > 0
+  );
+
+  const dataRows = exportRows.map(
     (d) =>
       new TableRow({
         children: [
@@ -111,7 +116,7 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
               }),
             ],
           }),
-          // Col 2: תיקון + timestamp + verified marker
+          // Col 2: תיקון ידני + timestamp + verified marker
           new TableCell({
             width: { size: 3500, type: WidthType.DXA },
             children: [
@@ -119,22 +124,30 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
                 bidirectional: true,
                 children: [
                   rtlRun(`[${d.timestamp}] `, { bold: true, size: 22 }),
-                  rtlRun(d.correctedText, { size: 22 }),
+                  rtlRun(d.correctedText || "(לא תוקן)", { size: 22 }),
                 ],
               }),
-              ...(d.humanVerified
+              ...(d.auditorNotes
                 ? [
                     new Paragraph({
                       bidirectional: true,
                       children: [
-                        rtlRun("✓ אומת ונבדק ידנית על ידי מומחה משפטי", {
-                          bold: true,
-                          size: 18,
-                        }),
+                        rtlRun(`הערת מבקר: ${d.auditorNotes}`, { size: 18 }),
                       ],
                     }),
                   ]
                 : []),
+              new Paragraph({
+                bidirectional: true,
+                children: [
+                  rtlRun(
+                    d.humanVerified
+                      ? "✓ נבדק ואומת ידנית על ידי מומחה משפטי"
+                      : "⚠ טרם אומת ידנית",
+                    { bold: true, size: 18 }
+                  ),
+                ],
+              }),
             ],
           }),
           // Col 3: משמעות + סיווג
