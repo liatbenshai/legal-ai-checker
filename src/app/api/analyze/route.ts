@@ -32,7 +32,7 @@ const SYSTEM_PROMPT = `אתה סורק חשדות בפרוטוקולים משפ�
 {"discrepancies":[{"timestamp":"MM:SS","originalText":"טקסט חשוד","correctedText":"","significance":"קריטי/בינוני/נמוך","explanation":"למה חשוד","riskScore":"high/medium/low","riskReason":"שם הדפוס","pageRef":""}]}
 אם אין: {"discrepancies":[]}`;
 
-const MAX_CHUNK_CHARS = 1500;
+const MAX_CHUNK_CHARS = 1000;
 
 function chunkText(text: string, maxChars: number): string[] {
   const chunks: string[] = [];
@@ -105,14 +105,14 @@ async function scanChunk(
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userParts.join("") },
       ],
       temperature: 0.05,
       response_format: { type: "json_object" },
-      max_tokens: 3000,
+      max_tokens: 2000,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
-      timeout: 60000, // 60s timeout per request
+      timeout: 30000, // 30s per GPT call — leave room for multiple chunks within 60s
     });
 
     const body = await request.json();
@@ -227,4 +227,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const maxDuration = 300; // 5 minutes for long documents
+export const maxDuration = 60; // Vercel Hobby max = 60 seconds

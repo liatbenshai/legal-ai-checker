@@ -204,7 +204,15 @@ export default function AnalyzePage() {
           fileName: audioFile.name,
         }),
       });
-      const audioData = await audioRes.json();
+      if (audioRes.status === 504) {
+        throw new Error("תמלול האודיו לוקח זמן רב מדי. נסו קובץ קטן יותר.");
+      }
+      let audioData;
+      try {
+        audioData = await audioRes.json();
+      } catch {
+        throw new Error(`שגיאה בתמלול (סטטוס ${audioRes.status}). נסו שוב.`);
+      }
       if (!audioRes.ok) throw new Error(audioData.error || "שגיאה בתמלול האודיו");
       updateStep("audio", "completed");
 
@@ -215,7 +223,24 @@ export default function AnalyzePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdfText: pdfData.text, whisperText: audioData.text }),
       });
-      const analyzeData = await analyzeRes.json();
+
+      // Handle 504 timeout and non-JSON responses
+      if (analyzeRes.status === 504) {
+        throw new Error(
+          "הניתוח לוקח זמן רב מדי. נסו להעלות קובץ PDF קטן יותר או לפצל אותו."
+        );
+      }
+
+      let analyzeData;
+      try {
+        analyzeData = await analyzeRes.json();
+      } catch {
+        // Server returned HTML error page instead of JSON
+        throw new Error(
+          `שגיאה בעיבוד התשובה מהשרת (סטטוס ${analyzeRes.status}). נסו שוב או העלו קובץ קטן יותר.`
+        );
+      }
+
       if (!analyzeRes.ok) throw new Error(analyzeData.error || "שגיאה בניתוח");
       updateStep("analyze", "completed");
       setDiscrepancies(analyzeData.discrepancies);
