@@ -1,10 +1,9 @@
 import { NextRequest } from "next/server";
-import { PDFParse } from "pdf-parse";
+import { extractText } from "unpdf";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
 export async function POST(request: NextRequest) {
   try {
-    // No env vars needed for PDF extraction, but validate Supabase for consistency
     const envError = validateEnvVars("NEXT_PUBLIC_SUPABASE_URL");
     if (envError) return envError;
 
@@ -21,17 +20,13 @@ export async function POST(request: NextRequest) {
 
     console.log(`[extract-pdf] Processing file: ${file.name} (${file.size} bytes)`);
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await extractText(new Uint8Array(arrayBuffer));
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parser = new PDFParse({ data: buffer }) as any;
-    await parser.load();
+    // pdf.text is string[] (one entry per page) — join all pages
+    const text = (Array.isArray(pdf.text) ? pdf.text.join("\n") : String(pdf.text)).trim();
 
-    // getText() returns { pages: [...], text: string, total: number }
-    const textResult = await parser.getText();
-    const text: string = (textResult?.text ?? "").trim();
-
-    console.log(`[extract-pdf] Extracted ${text.length} characters`);
+    console.log(`[extract-pdf] Extracted ${text.length} chars from ${pdf.totalPages} pages`);
 
     if (text.length < 50) {
       return jsonResponse({
@@ -41,12 +36,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // getInfo() returns { total: number, info: {...}, ... }
-    const info = await parser.getInfo();
-
     return jsonResponse({
       text,
-      pages: info?.total || 0,
+      pages: pdf.totalPages,
       isScanned: false,
     });
   } catch (error) {
