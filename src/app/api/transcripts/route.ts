@@ -13,12 +13,14 @@ export async function GET() {
     );
     if (envError) return envError;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-    console.log("[transcripts] Fetching transcript list");
+    // Log project identity — compare with save-results logs
+    console.log(`[transcripts] Supabase URL: ${supabaseUrl.substring(0, 30)}...`);
+    console.log(`[transcripts] Anon key: ${supabaseKey.substring(0, 20)}...`);
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { data, error } = await supabase
       .from("transcripts")
@@ -27,8 +29,13 @@ export async function GET() {
       .limit(50);
 
     if (error) {
-      console.error("[transcripts] Supabase error:", error);
-      return jsonResponse({ error: "שגיאה בטעינת הנתונים" }, 500);
+      console.error("[transcripts] Supabase error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      return jsonResponse({ error: `שגיאה בטעינת הנתונים: ${error.message}` }, 500);
     }
 
     const transcripts = (data || []).map((t) => {
@@ -45,7 +52,12 @@ export async function GET() {
       };
     });
 
-    console.log(`[transcripts] Returning ${transcripts.length} transcripts`);
+    console.log(
+      `[transcripts] Returning ${transcripts.length} transcripts` +
+        (transcripts.length > 0
+          ? ` (newest: "${transcripts[0].fileName}" at ${transcripts[0].createdAt})`
+          : "")
+    );
 
     return jsonResponse({ transcripts });
   } catch (error) {

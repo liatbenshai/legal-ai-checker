@@ -11,6 +11,13 @@ export async function POST(request: NextRequest) {
     );
     if (envError) return envError;
 
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+    // Log project identity so we can verify it matches the dashboard
+    console.log(`[save-results] Supabase URL: ${supabaseUrl.substring(0, 30)}...`);
+    console.log(`[save-results] Anon key: ${supabaseKey.substring(0, 20)}...`);
+
     const body = await request.json();
     const {
       transcriptId,
@@ -22,50 +29,100 @@ export async function POST(request: NextRequest) {
       discrepancies: Discrepancy[];
     } = body;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     const analysisResult = {
       discrepancies,
       analyzedAt: new Date().toISOString(),
     };
 
-    if (transcriptId) {
-      console.log(`[save-results] Updating transcript: ${transcriptId}`);
-      const { error } = await supabase
-        .from("transcripts")
-        .update({
-          analysis_result: analysisResult,
-          status: "done",
-        })
-        .eq("id", transcriptId);
+    // Add timestamp to the filename so each save is unique and visible
+    const now = new Date();
+    const timeStamp = now.toLocaleTimeString("he-IL", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const dateStamp = now.toLocaleDateString("he-IL");
+    const displayName = transcriptId
+      ? fileName
+      : `${fileName} (${dateStamp} ${timeStamp})`;
 
-      if (error) {
-        console.error("[save-results] Supabase update error:", error);
+    if (transcriptId) {
+      // ── Update existing record ──
+      console.log(`[save-results] UPDATE existing transcript: ${transcriptId}`);
+      console.log(`[save-results] Discrepancies count: ${discrepancies.length}`);
+
+      try {
+        const { data, error } = await supabase
+          .from("transcripts")
+          .update({
+            analysis_result: analysisResult,
+            status: "done",
+          })
+          .eq("id", transcriptId)
+          .select("id, file_name")
+          .single();
+
+        if (error) {
+          console.error("[save-results] UPDATE error:", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          });
+          return jsonResponse(
+            {
+              error: `שגיאה בעדכון: ${error.message} (${error.code})`,
+            },
+            500
+          );
+        }
+
+        console.log(`[save-results] ✅ Updated: ${data.id} — ${data.file_name}`);
+        return jsonResponse({ id: transcriptId, updated: true });
+      } catch (updateErr) {
+        console.error("[save-results] UPDATE exception:", updateErr);
         return jsonResponse({ error: "שגיאה בעדכון התוצאות" }, 500);
       }
-
-      return jsonResponse({ id: transcriptId, updated: true });
     } else {
-      console.log(`[save-results] Creating new transcript: ${fileName}`);
-      const { data, error } = await supabase
-        .from("transcripts")
-        .insert({
-          file_name: fileName,
-          analysis_result: analysisResult,
-          status: "done",
-        })
-        .select()
-        .single();
+      // ── Always INSERT a new record (never upsert) ──
+      console.log(`[save-results] INSERT new transcript: "${displayName}"`);
+      console.log(`[save-results] Discrepancies count: ${discrepancies.length}`);
 
-      if (error) {
-        console.error("[save-results] Supabase insert error:", error);
+      try {
+        const { data, error } = await supabase
+          .from("transcripts")
+          .insert({
+            file_name: displayName,
+            analysis_result: analysisResult,
+            status: "done",
+          })
+          .select("id, file_name, created_at")
+          .single();
+
+        if (error) {
+          console.error("[save-results] INSERT error:", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          });
+          return jsonResponse(
+            {
+              error: `שגיאה בשמירה: ${error.message} (${error.code})`,
+            },
+            500
+          );
+        }
+
+        console.log(
+          `[save-results] ✅ Created: ${data.id} — "${data.file_name}" at ${data.created_at}`
+        );
+        return jsonResponse({ id: data.id, updated: false });
+      } catch (insertErr) {
+        console.error("[save-results] INSERT exception:", insertErr);
         return jsonResponse({ error: "שגיאה בשמירת התוצאות" }, 500);
       }
-
-      return jsonResponse({ id: data.id, updated: false });
     }
   } catch (error) {
     return errorResponse("save-results", error, "שגיאה בשמירת התוצאות");
