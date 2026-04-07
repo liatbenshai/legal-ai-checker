@@ -16,6 +16,7 @@ import {
   Upload,
 } from "lucide-react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -84,34 +85,52 @@ export default function AnalyzePage() {
       }
       updateStep("pdf", "completed");
 
-      // ── Step 2: Upload audio to Supabase Storage ──────────────
+      // ── Step 2: Upload audio directly to Supabase Storage ─────
+      //    (browser → Supabase, bypasses Vercel 4.5MB limit)
       updateStep("upload", "in_progress");
 
-      // Client-side size check
       if (audioFile.size > MAX_AUDIO_SIZE) {
         throw new Error(
           `הקובץ גדול מדי (${(audioFile.size / 1024 / 1024).toFixed(0)}MB). אנא העלו קובץ קטן מ-100MB או פצלו אותו.`
         );
       }
 
-      const uploadFormData = new FormData();
-      uploadFormData.append("file", audioFile);
-      const uploadRes = await fetch("/api/upload-audio", {
-        method: "POST",
-        body: uploadFormData,
-      });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.error || "שגיאה בהעלאת האודיו");
+      const supabase = createClient();
+      const timestamp = Date.now();
+      const safeName = audioFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storagePath = `uploads/${timestamp}_${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("audio-files")
+        .upload(storagePath, audioFile, {
+          contentType: audioFile.type || "audio/mpeg",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error("Supabase upload error:", uploadError);
+        throw new Error("שגיאה בהעלאת קובץ האודיו לשרת. בדקו הרשאות אחסון ב-Supabase.");
+      }
+
+      // Get a signed URL valid for 1 hour
+      const { data: urlData, error: urlError } = await supabase.storage
+        .from("audio-files")
+        .createSignedUrl(storagePath, 3600);
+
+      if (urlError || !urlData?.signedUrl) {
+        throw new Error("שגיאה ביצירת קישור לקובץ האודיו");
+      }
+
       updateStep("upload", "completed");
 
-      // ── Step 3: Transcribe via URL (no body size limit) ───────
+      // ── Step 3: Transcribe via URL (tiny JSON, no body limit) ─
       updateStep("audio", "in_progress");
       const audioRes = await fetch("/api/transcribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          audioUrl: uploadData.url,
-          fileName: uploadData.fileName,
+          audioUrl: urlData.signedUrl,
+          fileName: audioFile.name,
         }),
       });
       const audioData = await audioRes.json();
