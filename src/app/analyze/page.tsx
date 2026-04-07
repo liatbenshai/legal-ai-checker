@@ -44,6 +44,7 @@ export default function AnalyzePage() {
   const [currentAudioTime, setCurrentAudioTime] = useState(0);
   const [transcriptId, setTranscriptId] = useState<string | null>(null);
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [analyzeProgress, setAnalyzeProgress] = useState({ current: 0, total: 0 });
 
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
   const canAnalyze = audioFile && pdfFile && !isAnalyzing;
@@ -216,62 +217,131 @@ export default function AnalyzePage() {
       if (!audioRes.ok) throw new Error(audioData.error || "שגיאה בתמלול האודיו");
       updateStep("audio", "completed");
 
-      // ── Step 4: Analyze discrepancies ─────────────────────────
+      // ── Step 4: Client-side chunked analysis ───────────────────
+      //    Each chunk is its own API call — no 504 timeouts
       updateStep("analyze", "in_progress");
-      const analyzeRes = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdfText: pdfData.text, whisperText: audioData.text }),
+
+      const CHUNK_SIZE = 800;
+      const pdfFullText: string = pdfData.text;
+      const whisperFullText: string | null = audioData?.text || null;
+
+      // Split into chunks
+      const pdfChunks: string[] = [];
+      const lines = pdfFullText.split("\n");
+      let currentChunk = "";
+      for (const line of lines) {
+        if (currentChunk.length + line.length + 1 > CHUNK_SIZE && currentChunk.length > 0) {
+          pdfChunks.push(currentChunk.trim());
+          currentChunk = "";
+        }
+        currentChunk += line + "\n";
+      }
+      if (currentChunk.trim()) pdfChunks.push(currentChunk.trim());
+
+      // Split whisper too (if available)
+      let whisperChunks: string[] | null = null;
+      if (whisperFullText) {
+        whisperChunks = [];
+        let wCurrent = "";
+        for (const line of whisperFullText.split("\n")) {
+          if (wCurrent.length + line.length + 1 > CHUNK_SIZE && wCurrent.length > 0) {
+            whisperChunks.push(wCurrent.trim());
+            wCurrent = "";
+          }
+          wCurrent += line + "\n";
+        }
+        if (wCurrent.trim()) whisperChunks.push(wCurrent.trim());
+      }
+
+      const totalChunks = pdfChunks.length;
+      setAnalyzeProgress({ current: 0, total: totalChunks });
+      console.log(`[analyze] Client-side batching: ${totalChunks} chunks of ≤${CHUNK_SIZE} chars`);
+
+      // Initialize empty results — will append as chunks complete
+      setDiscrepancies([]);
+      let allResults: Discrepancy[] = [];
+      let failedCount = 0;
+
+      for (let i = 0; i < totalChunks; i++) {
+        setAnalyzeProgress({ current: i + 1, total: totalChunks });
+
+        const wc = whisperChunks
+          ? whisperChunks[Math.min(i, whisperChunks.length - 1)]
+          : undefined;
+
+        try {
+          const res = await fetch("/api/analyze-chunk", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pdfChunk: pdfChunks[i],
+              whisperChunk: wc,
+              chunkIndex: i,
+              totalChunks,
+            }),
+          });
+
+          let data;
+          try {
+            data = await res.json();
+          } catch {
+            console.warn(`[analyze] Chunk ${i + 1} returned non-JSON (status ${res.status})`);
+            failedCount++;
+            continue;
+          }
+
+          if (res.ok && data.discrepancies?.length > 0) {
+            allResults = [...allResults, ...data.discrepancies];
+            // Live update — append new results immediately
+            setDiscrepancies([...allResults]);
+            console.log(`[analyze] ✅ Chunk ${i + 1}/${totalChunks}: +${data.discrepancies.length} zones (total: ${allResults.length})`);
+          } else if (!res.ok) {
+            console.warn(`[analyze] ⚠️ Chunk ${i + 1} failed: ${data.error}`);
+            failedCount++;
+          } else {
+            console.log(`[analyze] Chunk ${i + 1}/${totalChunks}: clean`);
+          }
+        } catch (chunkErr) {
+          console.error(`[analyze] ❌ Chunk ${i + 1} network error:`, chunkErr);
+          failedCount++;
+          // Continue to next chunk
+        }
+      }
+
+      // Sort final results by timestamp
+      allResults.sort((a, b) => {
+        const s = (t: string) => { const p = t.split(":").map(Number); return (p[0]||0)*60+(p[1]||0); };
+        return s(a.timestamp) - s(b.timestamp);
       });
+      setDiscrepancies(allResults);
 
-      // Handle 504 timeout and non-JSON responses
-      if (analyzeRes.status === 504) {
-        throw new Error(
-          "הניתוח לוקח זמן רב מדי. נסו להעלות קובץ PDF קטן יותר או לפצל אותו."
-        );
-      }
-
-      let analyzeData;
-      try {
-        analyzeData = await analyzeRes.json();
-      } catch {
-        // Server returned HTML error page instead of JSON
-        throw new Error(
-          `שגיאה בעיבוד התשובה מהשרת (סטטוס ${analyzeRes.status}). נסו שוב או העלו קובץ קטן יותר.`
-        );
-      }
-
-      if (!analyzeRes.ok) throw new Error(analyzeData.error || "שגיאה בניתוח");
-
-      if (analyzeData.partialResults) {
+      if (failedCount > 0) {
         updateStep("analyze", "completed",
-          `הושלם חלקית — נסרקו ${analyzeData.chunksAnalyzed} מתוך ${analyzeData.totalChunks} קטעים (מגבלת זמן)`
+          `הושלם — ${failedCount} קטעים נכשלו מתוך ${totalChunks}`
         );
       } else {
         updateStep("analyze", "completed");
       }
-      setDiscrepancies(analyzeData.discrepancies);
 
-      // ── Auto-save to Supabase so it appears in the dashboard ──
+      console.log(`[analyze] === DONE: ${allResults.length} total zones, ${failedCount} failed chunks ===`);
+
+      // ── Auto-save to Supabase ──
       try {
         const saveRes = await fetch("/api/save-results", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             fileName: pdfFile.name,
-            discrepancies: analyzeData.discrepancies,
+            discrepancies: allResults,
           }),
         });
         const saveData = await saveRes.json();
         if (saveRes.ok && saveData.id) {
           setTranscriptId(saveData.id);
-          console.log("[analyze] ✅ Auto-saved to dashboard:", saveData.id);
-        } else {
-          console.warn("[analyze] ⚠️ Auto-save failed:", saveData.error);
+          console.log("[analyze] ✅ Auto-saved:", saveData.id);
         }
       } catch (saveErr) {
         console.warn("[analyze] ⚠️ Auto-save error:", saveErr);
-        // Don't throw — results are still shown, just not saved yet
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "אירעה שגיאה בלתי צפויה";
@@ -335,7 +405,8 @@ export default function AnalyzePage() {
     [transcriptId, pdfFile]
   );
 
-  const showResults = discrepancies && !isAnalyzing;
+  // Show results as soon as first chunk returns (live streaming)
+  const showResults = discrepancies && discrepancies.length > 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-bl from-slate-50 via-indigo-50/30 to-violet-50/20">
@@ -466,12 +537,19 @@ export default function AnalyzePage() {
                         {step.id === "upload" && step.status === "in_progress" && uploadPercent > 0 && (
                           <div className="mt-1.5 flex items-center gap-2">
                             <div className="h-1.5 flex-1 rounded-full bg-indigo/10">
-                              <div
-                                className="h-1.5 rounded-full bg-indigo transition-all duration-300"
-                                style={{ width: `${uploadPercent}%` }}
-                              />
+                              <div className="h-1.5 rounded-full bg-indigo transition-all duration-300" style={{ width: `${uploadPercent}%` }} />
                             </div>
                             <span className="text-xs font-mono text-indigo">{uploadPercent}%</span>
+                          </div>
+                        )}
+                        {step.id === "analyze" && step.status === "in_progress" && analyzeProgress.total > 0 && (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <div className="h-1.5 flex-1 rounded-full bg-indigo/10">
+                              <div className="h-1.5 rounded-full bg-indigo transition-all duration-300" style={{ width: `${Math.round((analyzeProgress.current / analyzeProgress.total) * 100)}%` }} />
+                            </div>
+                            <span className="text-xs font-mono text-indigo">
+                              מנתח פסקה {analyzeProgress.current} מתוך {analyzeProgress.total}
+                            </span>
                           </div>
                         )}
                       </div>
