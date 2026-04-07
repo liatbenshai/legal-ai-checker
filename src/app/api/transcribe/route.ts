@@ -10,37 +10,31 @@ const WHISPER_MAX_SIZE = 25 * 1024 * 1024; // 25MB
 const CHUNK_DURATION_SECONDS = 600; // 10 minutes per chunk
 
 /**
- * Resolve ffmpeg binary path — works locally with ffmpeg-static
- * and on Vercel/serverless where ffmpeg-static may not work.
+ * Resolve ffmpeg binary path.
  */
 function getFfmpegPath(): string | null {
-  // 1. Try ffmpeg-static (works locally, may fail on serverless)
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegStatic = require("ffmpeg-static") as string;
     if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
-      console.log("[transcribe] Using ffmpeg-static:", ffmpegStatic);
       return ffmpegStatic;
     }
   } catch {
-    console.warn("[transcribe] ffmpeg-static not available");
+    // not available
   }
 
-  // 2. Try system ffmpeg (available in some serverless runtimes)
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { execSync } = require("child_process");
-    const systemPath = execSync("which ffmpeg 2>/dev/null || where ffmpeg 2>nul", {
-      encoding: "utf-8",
-    }).trim();
-    if (systemPath) {
-      console.log("[transcribe] Using system ffmpeg:", systemPath);
-      return systemPath;
-    }
+    const systemPath = execSync(
+      "which ffmpeg 2>/dev/null || where ffmpeg 2>nul",
+      { encoding: "utf-8" }
+    ).trim();
+    if (systemPath) return systemPath;
   } catch {
     // not found
   }
 
-  console.warn("[transcribe] No ffmpeg binary found — chunking disabled");
   return null;
 }
 
@@ -49,9 +43,9 @@ function splitAudioFile(
   tmpDir: string,
   ffmpegPath: string
 ): string[] {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { execSync } = require("child_process");
 
-  // Get duration
   let durationOutput: string;
   try {
     durationOutput = execSync(
@@ -65,10 +59,7 @@ function splitAudioFile(
   const durationMatch = durationOutput.match(
     /Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/
   );
-  if (!durationMatch) {
-    console.warn("[transcribe] Cannot determine audio duration, skipping split");
-    return [inputPath];
-  }
+  if (!durationMatch) return [inputPath];
 
   const totalSeconds =
     parseInt(durationMatch[1]) * 3600 +
@@ -77,9 +68,7 @@ function splitAudioFile(
 
   console.log(`[transcribe] Audio duration: ${totalSeconds}s`);
 
-  if (totalSeconds <= CHUNK_DURATION_SECONDS) {
-    return [inputPath];
-  }
+  if (totalSeconds <= CHUNK_DURATION_SECONDS) return [inputPath];
 
   const numChunks = Math.ceil(totalSeconds / CHUNK_DURATION_SECONDS);
   console.log(`[transcribe] Splitting into ${numChunks} chunks`);
@@ -88,12 +77,10 @@ function splitAudioFile(
   for (let i = 0; i < numChunks; i++) {
     const startTime = i * CHUNK_DURATION_SECONDS;
     const chunkPath = path.join(tmpDir, `chunk_${i}.mp3`);
-
     execSync(
       `"${ffmpegPath}" -i "${inputPath}" -ss ${startTime} -t ${CHUNK_DURATION_SECONDS} -acodec libmp3lame -ar 16000 -ac 1 -y "${chunkPath}"`,
       { stdio: "pipe" }
     );
-
     chunks.push(chunkPath);
   }
 
@@ -107,10 +94,11 @@ async function transcribeChunk(
 ): Promise<{ text: string; segments: WhisperSegment[] }> {
   const fileName = path.basename(filePath);
   const fileBuffer = fs.readFileSync(filePath);
-
   const file = new File([fileBuffer], fileName, { type: "audio/mpeg" });
 
-  console.log(`[transcribe] Sending chunk to Whisper: ${fileName} (${fileBuffer.length} bytes)`);
+  console.log(
+    `[transcribe] Sending to Whisper: ${fileName} (${(fileBuffer.length / 1024 / 1024).toFixed(1)}MB)`
+  );
 
   const response = await openai.audio.transcriptions.create({
     model: "whisper-1",
@@ -127,14 +115,10 @@ async function transcribeChunk(
     end: seg.end + timeOffset,
   }));
 
-  return {
-    text: response.text,
-    segments,
-  };
+  return { text: response.text, segments };
 }
 
 export async function POST(request: NextRequest) {
-  // Validate env vars before doing anything
   const envError = validateEnvVars("OPENAI_API_KEY");
   if (envError) return envError;
 
@@ -142,38 +126,53 @@ export async function POST(request: NextRequest) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-"));
 
   try {
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
+    const body = await request.json();
+    const { audioUrl, fileName } = body as {
+      audioUrl: string;
+      fileName: string;
+    };
 
-    if (!file) {
-      return jsonResponse({ error: "לא נבחר קובץ אודיו" }, 400);
+    if (!audioUrl) {
+      return jsonResponse({ error: "חסר קישור לקובץ אודיו" }, 400);
     }
 
-    console.log(`[transcribe] Processing audio: ${file.name} (${file.size} bytes)`);
+    console.log(`[transcribe] Downloading audio from storage: ${fileName}`);
 
-    // Save uploaded file to temp directory
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    // Download the file from Supabase Storage signed URL
+    const downloadRes = await fetch(audioUrl);
+    if (!downloadRes.ok) {
+      console.error(
+        `[transcribe] Download failed: ${downloadRes.status} ${downloadRes.statusText}`
+      );
+      return jsonResponse({ error: "שגיאה בהורדת קובץ האודיו מהשרת" }, 500);
+    }
+
+    const audioBuffer = Buffer.from(await downloadRes.arrayBuffer());
+    console.log(
+      `[transcribe] Downloaded ${(audioBuffer.length / 1024 / 1024).toFixed(1)}MB`
+    );
+
+    const safeName = (fileName || "audio.mp3").replace(/[^a-zA-Z0-9._-]/g, "_");
     const inputPath = path.join(tmpDir, safeName);
-    fs.writeFileSync(inputPath, buffer);
+    fs.writeFileSync(inputPath, audioBuffer);
 
+    // Determine if we need to split
     let chunkPaths: string[];
 
-    if (buffer.length > WHISPER_MAX_SIZE) {
-      console.log(`[transcribe] File exceeds 25MB (${(buffer.length / 1024 / 1024).toFixed(1)}MB), attempting split`);
-
+    if (audioBuffer.length > WHISPER_MAX_SIZE) {
+      console.log(
+        `[transcribe] File exceeds 25MB, attempting ffmpeg split`
+      );
       const ffmpegPath = getFfmpegPath();
       if (!ffmpegPath) {
-        // No ffmpeg available — tell user to upload smaller files
         return jsonResponse(
           {
             error:
-              "הקובץ גדול מ-25MB ולא ניתן לפצל אותו בסביבה הנוכחית. אנא העלו קובץ קטן יותר או פצלו את האודיו מראש.",
+              "הקובץ גדול מ-25MB ולא ניתן לפצל אותו בסביבה הנוכחית. אנא פצלו את האודיו מראש לקטעים של עד 25MB.",
           },
           413
         );
       }
-
       chunkPaths = splitAudioFile(inputPath, tmpDir, ffmpegPath);
     } else {
       chunkPaths = [inputPath];
@@ -184,14 +183,18 @@ export async function POST(request: NextRequest) {
     const allSegments: WhisperSegment[] = [];
 
     for (let i = 0; i < chunkPaths.length; i++) {
-      console.log(`[transcribe] Transcribing chunk ${i + 1}/${chunkPaths.length}`);
+      console.log(
+        `[transcribe] Transcribing chunk ${i + 1}/${chunkPaths.length}`
+      );
       const timeOffset = i * CHUNK_DURATION_SECONDS;
       const result = await transcribeChunk(openai, chunkPaths[i], timeOffset);
       fullText += (fullText ? " " : "") + result.text;
       allSegments.push(...result.segments);
     }
 
-    console.log(`[transcribe] Complete — ${fullText.length} chars, ${allSegments.length} segments`);
+    console.log(
+      `[transcribe] Complete — ${fullText.length} chars, ${allSegments.length} segments`
+    );
 
     const result: TranscriptionResult = {
       text: fullText,
@@ -202,7 +205,6 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return errorResponse("transcribe", error, "שגיאה בתמלול האודיו");
   } finally {
-    // Cleanup temp files
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -211,4 +213,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const maxDuration = 300; // Allow up to 5 minutes for long audio files
+export const maxDuration = 300;

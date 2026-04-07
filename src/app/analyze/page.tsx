@@ -13,6 +13,7 @@ import {
   XCircle,
   RotateCcw,
   Home,
+  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -23,8 +24,11 @@ import AnalysisResults from "@/components/AnalysisResults";
 import AudioPlayer, { type AudioPlayerHandle } from "@/components/AudioPlayer";
 import type { Discrepancy, AnalysisStep } from "@/lib/types";
 
+const MAX_AUDIO_SIZE = 100 * 1024 * 1024; // 100MB
+
 const INITIAL_STEPS: AnalysisStep[] = [
   { id: "pdf", label: "חילוץ טקסט מה-PDF", status: "pending" },
+  { id: "upload", label: "העלאת האודיו לשרת", status: "pending" },
   { id: "audio", label: "תמלול האודיו עם Whisper", status: "pending" },
   { id: "analyze", label: "ניתוח והשוואה עם GPT-4o", status: "pending" },
 ];
@@ -67,6 +71,7 @@ export default function AnalyzePage() {
     setTranscriptId(null);
 
     try {
+      // ── Step 1: Extract PDF text ──────────────────────────────
       updateStep("pdf", "in_progress");
       const pdfFormData = new FormData();
       pdfFormData.append("file", pdfFile);
@@ -79,14 +84,41 @@ export default function AnalyzePage() {
       }
       updateStep("pdf", "completed");
 
+      // ── Step 2: Upload audio to Supabase Storage ──────────────
+      updateStep("upload", "in_progress");
+
+      // Client-side size check
+      if (audioFile.size > MAX_AUDIO_SIZE) {
+        throw new Error(
+          `הקובץ גדול מדי (${(audioFile.size / 1024 / 1024).toFixed(0)}MB). אנא העלו קובץ קטן מ-100MB או פצלו אותו.`
+        );
+      }
+
+      const uploadFormData = new FormData();
+      uploadFormData.append("file", audioFile);
+      const uploadRes = await fetch("/api/upload-audio", {
+        method: "POST",
+        body: uploadFormData,
+      });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.error || "שגיאה בהעלאת האודיו");
+      updateStep("upload", "completed");
+
+      // ── Step 3: Transcribe via URL (no body size limit) ───────
       updateStep("audio", "in_progress");
-      const audioFormData = new FormData();
-      audioFormData.append("file", audioFile);
-      const audioRes = await fetch("/api/transcribe", { method: "POST", body: audioFormData });
+      const audioRes = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audioUrl: uploadData.url,
+          fileName: uploadData.fileName,
+        }),
+      });
       const audioData = await audioRes.json();
       if (!audioRes.ok) throw new Error(audioData.error || "שגיאה בתמלול האודיו");
       updateStep("audio", "completed");
 
+      // ── Step 4: Analyze discrepancies ─────────────────────────
       updateStep("analyze", "in_progress");
       const analyzeRes = await fetch("/api/analyze", {
         method: "POST",
@@ -270,7 +302,7 @@ export default function AnalyzePage() {
               <Progress value={progressPercent()} className="mb-6 h-2" />
               <div className="space-y-4">
                 {steps.map((step) => {
-                  const StepIcon = step.id === "pdf" ? FileText : step.id === "audio" ? Mic : Brain;
+                  const StepIcon = step.id === "pdf" ? FileText : step.id === "upload" ? Upload : step.id === "audio" ? Mic : Brain;
                   return (
                     <div key={step.id} className="flex items-center gap-3">
                       {step.status === "completed" ? (
