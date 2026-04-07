@@ -219,13 +219,22 @@ export default function AnalyzePage() {
 
       // ── Step 4: Client-side chunked analysis ───────────────────
       //    Each chunk is its own API call — no 504 timeouts
+      //    Whisper text is discarded — only timestamps used for sync
       updateStep("analyze", "in_progress");
 
-      const CHUNK_SIZE = 800;
+      const CHUNK_SIZE = 1000;
       const pdfFullText: string = pdfData.text;
-      const whisperFullText: string | null = audioData?.text || null;
 
-      // Split into chunks
+      // Extract Whisper timestamps only (for audio sync, not content)
+      const whisperTimestamps: string | undefined = audioData?.segments
+        ? audioData.segments
+            .map((s: { start: number; text: string }) =>
+              `[${Math.floor(s.start / 60)}:${String(Math.floor(s.start % 60)).padStart(2, "0")}]`
+            )
+            .join(" ")
+        : undefined;
+
+      // Split PDF text into chunks
       const pdfChunks: string[] = [];
       const lines = pdfFullText.split("\n");
       let currentChunk = "";
@@ -237,21 +246,6 @@ export default function AnalyzePage() {
         currentChunk += line + "\n";
       }
       if (currentChunk.trim()) pdfChunks.push(currentChunk.trim());
-
-      // Split whisper too (if available)
-      let whisperChunks: string[] | null = null;
-      if (whisperFullText) {
-        whisperChunks = [];
-        let wCurrent = "";
-        for (const line of whisperFullText.split("\n")) {
-          if (wCurrent.length + line.length + 1 > CHUNK_SIZE && wCurrent.length > 0) {
-            whisperChunks.push(wCurrent.trim());
-            wCurrent = "";
-          }
-          wCurrent += line + "\n";
-        }
-        if (wCurrent.trim()) whisperChunks.push(wCurrent.trim());
-      }
 
       const totalChunks = pdfChunks.length;
       setAnalyzeProgress({ current: 0, total: totalChunks });
@@ -265,19 +259,15 @@ export default function AnalyzePage() {
       for (let i = 0; i < totalChunks; i++) {
         setAnalyzeProgress({ current: i + 1, total: totalChunks });
 
-        const wc = whisperChunks
-          ? whisperChunks[Math.min(i, whisperChunks.length - 1)]
-          : undefined;
-
         try {
           const res = await fetch("/api/analyze-chunk", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               pdfChunk: pdfChunks[i],
-              whisperChunk: wc,
               chunkIndex: i,
               totalChunks,
+              whisperTimestamps,
             }),
           });
 

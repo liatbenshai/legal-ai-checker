@@ -3,31 +3,34 @@ import OpenAI from "openai";
 import type { Discrepancy } from "@/lib/types";
 import { validateEnvVars, jsonResponse, errorResponse } from "@/lib/api-helpers";
 
-export const maxDuration = 30; // single chunk = fast
+export const maxDuration = 30;
 
-const SYSTEM_PROMPT = `סרוק פרוטוקול משפטי בעברית וסמן אזורים חשודים. אל תתקן — רק סמן.
+const SYSTEM_PROMPT = `אתה סורק אנומליות אוניברסלי לפרוטוקולים משפטיים בעברית.
+סרוק את הטקסט וסמן אזורים חשודים. אל תתקן — רק סמן. ה-PDF הוא הטקסט היחיד.
 
-🔴 high:
-- מילים לא קיימות בעברית (gibberish)
-- משפטים שבורים דקדוקית (syntaxCollapse)
-- בלוק מעל 400 תווים ללא החלפת דובר (speakerFatigue)
-- משפט עם לא/אין/כן/נכון/מעולם (negationFlag)
-- שיוך דובר חשוד (speakerOverlap)
-- שם פרטי/משפחה או מספר/תאריך/סכום (properNameWatch)
-- סיומות מורפולוגיות שגויות ת/תי/ה (morphologicalMismatch)
-- מילה יומיומית במקום מונח משפטי (legalHallucination)
+## דפוסים אוניברסליים לסימון:
+
+🔴 high — חובת בדיקה:
+1. **עוגני דוברים**: זהה שמות דוברים לפי תבנית ^[שם]: — סמן מעבר דובר חשוד או בלוק ארוך (>300 תווים) ללא החלפה (speakerFatigue)
+2. **טריגר שלילה**: כל משפט עם לא/לו/אין/אף פעם/חלילה/מעולם/שום/כן/נכון/אמת/בהחלט — סימון חובה (negationFlag)
+3. **שמירת ישויות**: כל שם פרטי/משפחה, מספר, תאריך, סכום כספי, כתובת, מספר תיק (entityWatch)
+4. **סיכון מורפולוגי**: מילים בסיומות ת/תי/ה שלא מתאימות להקשר הדובר (morphologicalRisk)
+5. **הזיות משפטיות**: מילה יומיומית שנשמעת כמו מונח משפטי: סיבוב≠שיבוב, הרגשה≠הרשעה (legalHallucination)
+6. **ג'יבריש**: מילה שאינה קיימת בעברית ואינה שם מוגן (gibberish)
+7. **קריסת תחביר**: משפט ללא נושא/פועל, שני משפטים ממוזגים (syntaxCollapse)
 
 🟡 medium:
-- משפט שוטף מדי — חשד להחלקה (smoothing)
-- שאלה ותשובה שלא מתחברות (semanticGap)
+8. **החלקה אקוסטית**: משפט שוטף מדי — חשד שהיסוסים הוסרו (smoothing)
+9. **פער סמנטי**: שאלה ותשובה שלא מתחברות, או מעבר נושא לא הגיוני (semanticGap)
 
-🟢 low: ניסוח לא טבעי (stylistic)
+🟢 low:
+10. ניסוח לא טבעי (stylistic)
 
-אל תסמן: רווחים, פיסוק, עיצוב.
-מילון מוגן: זמישלני, פרופסיה, סומטית, לונגיטודינליות, שיבוב, הרשעה, זיכוי
+## אל תסמן: רווחים, פיסוק, עיצוב, כותרות.
+## מילון מוגן: זמישלני, פרופסיה, סומטית, לונגיטודינליות, שיבוב, הרשעה, זיכוי, אנמנזה, פתולוגיה
 
-JSON בלבד:
-{"discrepancies":[{"timestamp":"MM:SS","originalText":"טקסט","correctedText":"","significance":"קריטי/בינוני/נמוך","explanation":"הסבר","riskScore":"high/medium/low","riskReason":"דפוס","pageRef":""}]}
+## JSON בלבד:
+{"discrepancies":[{"timestamp":"MM:SS","originalText":"הטקסט","correctedText":"","significance":"קריטי/בינוני/נמוך","explanation":"למה חשוד","riskScore":"high/medium/low","riskReason":"דפוס","pageRef":""}]}
 אם אין: {"discrepancies":[]}`;
 
 export async function POST(request: NextRequest) {
@@ -41,20 +44,21 @@ export async function POST(request: NextRequest) {
     });
 
     const body = await request.json();
-    const { pdfChunk, whisperChunk, chunkIndex, totalChunks } = body as {
+    const { pdfChunk, chunkIndex, totalChunks, whisperTimestamps } = body as {
       pdfChunk: string;
-      whisperChunk?: string;
       chunkIndex: number;
       totalChunks: number;
+      whisperTimestamps?: string; // timestamps only, no text
     };
 
     if (!pdfChunk) return jsonResponse({ error: "חסר טקסט" }, 400);
 
     console.log(`[chunk] 📄 Chunk ${chunkIndex + 1}/${totalChunks} (${pdfChunk.length} chars)`);
 
-    const userMsg = whisperChunk
-      ? `קטע ${chunkIndex + 1}/${totalChunks}:\n${pdfChunk}\n\nרמז Whisper:\n${whisperChunk}`
-      : `קטע ${chunkIndex + 1}/${totalChunks}:\n${pdfChunk}`;
+    let userMsg = `קטע ${chunkIndex + 1}/${totalChunks}:\n${pdfChunk}`;
+    if (whisperTimestamps) {
+      userMsg += `\n\nעוגני זמן מהאודיו (לסנכרון בלבד):\n${whisperTimestamps}`;
+    }
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -81,7 +85,7 @@ export async function POST(request: NextRequest) {
         (item: Record<string, string>): Discrepancy => ({
           timestamp: item.timestamp || "00:00",
           originalText: item.originalText || "",
-          correctedText: item.correctedText || "",
+          correctedText: "",
           significance: (item.significance as Discrepancy["significance"]) || "נמוך",
           explanation: item.explanation || "",
           riskScore: (item.riskScore as Discrepancy["riskScore"]) || "low",
@@ -91,7 +95,7 @@ export async function POST(request: NextRequest) {
           pageRef: item.pageRef || "",
         })
       );
-    } catch (parseErr) {
+    } catch {
       console.error(`[chunk] ❌ Parse failed chunk ${chunkIndex + 1}:`, content?.substring(0, 300));
       return jsonResponse({ discrepancies: [], chunkIndex, parseError: true });
     }
