@@ -52,12 +52,13 @@ export async function GET() {
       };
     });
 
-    console.log(
-      `[transcripts] Returning ${transcripts.length} transcripts` +
-        (transcripts.length > 0
-          ? ` (newest: "${transcripts[0].fileName}" at ${transcripts[0].createdAt})`
-          : "")
-    );
+    console.log(`[transcripts] 📊 Total records found: ${transcripts.length}`);
+    if (transcripts.length > 0) {
+      console.log(`[transcripts] 📋 Newest: "${transcripts[0].fileName}" — ${transcripts[0].createdAt} — status: ${transcripts[0].status}`);
+      console.log(`[transcripts] 📋 Oldest: "${transcripts[transcripts.length - 1].fileName}" — ${transcripts[transcripts.length - 1].createdAt}`);
+    } else {
+      console.log("[transcripts] ⚠️ No records found in 'transcripts' table");
+    }
 
     return jsonResponse({ transcripts });
   } catch (error) {

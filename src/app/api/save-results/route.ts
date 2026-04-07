@@ -90,17 +90,31 @@ export async function POST(request: NextRequest) {
       console.log(`[save-results] Discrepancies count: ${discrepancies.length}`);
 
       try {
+        const insertPayload = {
+          file_name: displayName,
+          analysis_result: analysisResult,
+          status: "done",
+        };
+        console.log("[save-results] 💾 INSERT payload:", JSON.stringify({
+          file_name: insertPayload.file_name,
+          status: insertPayload.status,
+          discrepancies_count: discrepancies.length,
+        }));
+
         const { data, error } = await supabase
           .from("transcripts")
-          .insert({
-            file_name: displayName,
-            analysis_result: analysisResult,
-            status: "done",
-          })
+          .insert(insertPayload)
           .select("id, file_name, created_at")
           .single();
 
+        console.log("💾 Database Insert Attempt:", {
+          success: !error,
+          data: data ? { id: data.id, file_name: data.file_name } : null,
+          error: error ? { code: error.code, message: error.message } : null,
+        });
+
         if (error) {
+          console.error("❌ SQL Error Details:", error.message, error.details);
           console.error("[save-results] INSERT error:", {
             message: error.message,
             code: error.code,

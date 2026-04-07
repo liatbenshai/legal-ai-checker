@@ -219,6 +219,28 @@ export default function AnalyzePage() {
       if (!analyzeRes.ok) throw new Error(analyzeData.error || "שגיאה בניתוח");
       updateStep("analyze", "completed");
       setDiscrepancies(analyzeData.discrepancies);
+
+      // ── Auto-save to Supabase so it appears in the dashboard ──
+      try {
+        const saveRes = await fetch("/api/save-results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: pdfFile.name,
+            discrepancies: analyzeData.discrepancies,
+          }),
+        });
+        const saveData = await saveRes.json();
+        if (saveRes.ok && saveData.id) {
+          setTranscriptId(saveData.id);
+          console.log("[analyze] ✅ Auto-saved to dashboard:", saveData.id);
+        } else {
+          console.warn("[analyze] ⚠️ Auto-save failed:", saveData.error);
+        }
+      } catch (saveErr) {
+        console.warn("[analyze] ⚠️ Auto-save error:", saveErr);
+        // Don't throw — results are still shown, just not saved yet
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "אירעה שגיאה בלתי צפויה";
       setError(message);
