@@ -242,7 +242,14 @@ export default function AnalyzePage() {
       }
 
       if (!analyzeRes.ok) throw new Error(analyzeData.error || "שגיאה בניתוח");
-      updateStep("analyze", "completed");
+
+      if (analyzeData.partialResults) {
+        updateStep("analyze", "completed",
+          `הושלם חלקית — נסרקו ${analyzeData.chunksAnalyzed} מתוך ${analyzeData.totalChunks} קטעים (מגבלת זמן)`
+        );
+      } else {
+        updateStep("analyze", "completed");
+      }
       setDiscrepancies(analyzeData.discrepancies);
 
       // ── Auto-save to Supabase so it appears in the dashboard ──
