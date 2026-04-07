@@ -64,9 +64,24 @@ const SYSTEM_PROMPT = `אתה מבקר תמלילים משפטיים בכיר ע
 - שינוי זמן פועל ללא שינוי משמעות
 - מילה שנוספה/הושמטה ולא משנה את התמונה הכללית
 
+## ציון חשד (Risk Score)
+לכל שגיאה, הוסף ציון חשד שמציין את ההסתברות שזו שגיאת AI אמיתית (ולא טעות של Whisper):
+
+- **high** — סבירות גבוהה לשגיאת AI: החלפת דובר, השמטת "לא", קיפול היסוסים, שם שהשתנה בפרוטוקול
+- **medium** — סבירות בינונית: דמיון פונטי שעשוי להיות טעות PDF או טעות Whisper, החלקת ניסוח
+- **low** — סבירות נמוכה: ייתכן שזו טעות Whisper ולא שגיאת פרוטוקול
+
+הוסף גם שדה riskReason שמסביר למה זה חשוד:
+- "phoneticSimilarity" — המילים נשמעות דומה אבל המשמעות שונה
+- "speakerMismatch" — שיוך דובר שגוי
+- "smoothing" — משפט מגומגם "הוחלק" לניסוח קצר
+- "technicalTerm" — מונח מקצועי נדיר שה-AI נוטה לפספס
+- "negationFlip" — היפוך חיוב/שלילה
+- "omission" — השמטת תוכן מהותי
+
 ## פורמט התשובה
 החזר אובייקט JSON בלבד:
-{"discrepancies": [{ "timestamp": "MM:SS", "originalText": "הטקסט מהפרוטוקול (PDF)", "correctedText": "מה שנאמר בפועל באודיו", "significance": "קריטי/בינוני/נמוך", "explanation": "הסבר + השלכה משפטית" }]}
+{"discrepancies": [{ "timestamp": "MM:SS", "originalText": "הטקסט מהפרוטוקול (PDF)", "correctedText": "מה שנאמר בפועל באודיו", "significance": "קריטי/בינוני/נמוך", "explanation": "הסבר + השלכה משפטית", "riskScore": "high/medium/low", "riskReason": "סוג החשד" }]}
 
 אם לא נמצאו שגיאות מהותיות: {"discrepancies": []}`;
 
@@ -196,6 +211,9 @@ ${whisperChunk}
         significance:
           (item.significance as Discrepancy["significance"]) || "נמוך",
         explanation: item.explanation || "",
+        riskScore: (item.riskScore as Discrepancy["riskScore"]) || "low",
+        riskReason: item.riskReason || "",
+        humanVerified: false,
       })
     );
 

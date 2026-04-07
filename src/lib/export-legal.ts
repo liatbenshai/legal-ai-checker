@@ -101,6 +101,7 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
     (d) =>
       new TableRow({
         children: [
+          // Col 1: מקור (PDF)
           new TableCell({
             width: { size: 3000, type: WidthType.DXA },
             children: [
@@ -110,6 +111,7 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
               }),
             ],
           }),
+          // Col 2: תיקון + timestamp + verified marker
           new TableCell({
             width: { size: 3500, type: WidthType.DXA },
             children: [
@@ -120,8 +122,22 @@ function createDiscrepancyTable(discrepancies: Discrepancy[]) {
                   rtlRun(d.correctedText, { size: 22 }),
                 ],
               }),
+              ...(d.humanVerified
+                ? [
+                    new Paragraph({
+                      bidirectional: true,
+                      children: [
+                        rtlRun("✓ אומת ונבדק ידנית על ידי מומחה משפטי", {
+                          bold: true,
+                          size: 18,
+                        }),
+                      ],
+                    }),
+                  ]
+                : []),
             ],
           }),
+          // Col 3: משמעות + סיווג
           new TableCell({
             width: { size: 3000, type: WidthType.DXA },
             children: [
@@ -328,6 +344,15 @@ export function generateLegalDocx(
             children: [
               rtlRun(
                 `• שגיאות קלות: ${opts.discrepancies.filter((d) => d.significance === "נמוך").length}`
+              ),
+            ],
+          }),
+          new Paragraph({
+            bidirectional: true,
+            indent: { right: 500 },
+            children: [
+              rtlRun(
+                `• אומתו ונבדקו ידנית: ${opts.discrepancies.filter((d) => d.humanVerified).length} מתוך ${opts.discrepancies.length}`
               ),
             ],
           }),

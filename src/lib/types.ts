@@ -4,6 +4,12 @@ export interface Discrepancy {
   correctedText: string;
   significance: "קריטי" | "בינוני" | "נמוך";
   explanation: string;
+  /** AI-assigned risk score: high / medium / low */
+  riskScore?: "high" | "medium" | "low";
+  /** Why the AI flagged this as high-risk */
+  riskReason?: string;
+  /** Has a human reviewed and verified this row? */
+  humanVerified?: boolean;
 }
 
 export interface WhisperSegment {
